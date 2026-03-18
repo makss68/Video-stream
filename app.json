@@ -1,0 +1,51 @@
+{
+  "expo": {
+    "name": "StreamViewer",
+    "slug": "stream-viewer",
+    "version": "1.0.0",
+    "orientation": "default",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "dark",
+    "splash": {
+      "resizeMode": "contain",
+      "backgroundColor": "#0A0A0F"
+    },
+    "assetBundlePatterns": [
+      "**/*"
+    ],
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.streamviewer.app",
+      "infoPlist": {
+        "NSCameraUsageDescription": "Used to display streams"
+      }
+    },
+    "android": {
+      "adaptiveIcon": {
+        "backgroundColor": "#0A0A0F"
+      },
+      "package": "com.streamviewer.app",
+      "permissions": [
+        "INTERNET",
+        "ACCESS_NETWORK_STATE"
+      ],
+      "isTV": true,
+      "banner": "./assets/tv-banner.png"
+    },
+    "web": {
+      "bundler": "metro",
+      "output": "single",
+      "favicon": "./assets/favicon.png"
+    },
+    "plugins": [
+      [
+        "expo-video",
+        {
+          "supportsBackgroundPlayback": false
+        }
+      ],
+      "expo-secure-store",
+      "expo-asset"
+    ]
+  }
+}
