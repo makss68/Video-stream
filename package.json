@@ -7,7 +7,7 @@
     "ios": "expo run:ios",
     "web": "expo start --web",
     "build:web": "expo export --platform web",
-    "prebuild:android": "expo prebuild --platform android --clean && echo 'android.kotlinVersion=1.9.24' >> android/gradle.properties",
+    "prebuild:android": "expo prebuild --platform android --clean && bash scripts/patch-android.sh",
     "build:tv:apk": "cd android && ./gradlew assembleRelease",
     "build:tv:apk:debug": "cd android && ./gradlew assembleDebug",
     "build:tv:aab": "cd android && ./gradlew bundleRelease",

@@ -1,0 +1,22 @@
+# Dependencies
+node_modules/
+
+# Generated native projects (rebuilt via `npm run prebuild:android`)
+android/
+ios/
+
+# Build output
+dist/
+.expo/
+
+# Signing — never commit these
+*.jks
+*.keystore
+keystore.properties
+
+# Environment
+.env
+.env.local
+
+# OS
+.DS_Store
