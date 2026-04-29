@@ -81,6 +81,12 @@ function mapVodStream(apiStream: ApiVodStream): Stream {
 // ─── API calls ────────────────────────────────────────────────────────────────
 function buildApiUrl(action: string, extra?: Record<string, string>) {
   const { url, username, password } = useAuthStore.getState();
+  if (Platform.OS === 'web') {
+    return {
+      url: '/api/proxy',
+      params: { serverUrl: url, username, password, action, ...extra },
+    };
+  }
   return {
     url: `${url}/player_api.php`,
     params: { username, password, action, ...extra },

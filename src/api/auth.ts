@@ -1,4 +1,5 @@
 import axios from 'axios';
+import { Platform } from 'react-native';
 import { ApiCategory } from '../types';
 
 /**
@@ -12,11 +13,18 @@ export async function validateCredentials(
 ): Promise<void> {
   const cleanUrl = url.trim().replace(/\/+$/, '');
 
-  const endpoint = `${cleanUrl}/player_api.php`;
+  // On web the page is HTTPS; direct HTTP calls are blocked (mixed content).
+  // Route through the server-side proxy instead.
+  const endpoint = Platform.OS === 'web' ? '/api/proxy' : `${cleanUrl}/player_api.php`;
+  const params =
+    Platform.OS === 'web'
+      ? { serverUrl: cleanUrl, username, password, action: 'get_live_categories' }
+      : { username, password, action: 'get_live_categories' };
+
   let data: unknown;
   try {
     const res = await axios.get<ApiCategory[]>(endpoint, {
-      params: { username, password, action: 'get_live_categories' },
+      params,
       timeout: 15_000,
     });
     data = res.data;
