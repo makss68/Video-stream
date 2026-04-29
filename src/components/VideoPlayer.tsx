@@ -25,6 +25,12 @@ function isHlsUrl(url: string) {
   return /\/live\//i.test(url) || /\.m3u8/i.test(url);
 }
 
+/** Proxy HTTP stream URLs through the server-side relay to avoid mixed-content blocks. */
+function toProxyUrl(url: string): string {
+  if (url.startsWith('http:')) return `/api/stream?url=${encodeURIComponent(url)}`;
+  return url;
+}
+
 export default function VideoPlayer({
   url, playing, muted, seekTo, style,
   onStatusChange, onProgress, onSeeked,
@@ -41,11 +47,13 @@ export default function VideoPlayer({
     hlsRef.current = null;
     onStatusChange?.('loading');
 
+    const src = toProxyUrl(url);
+
     if (isHlsUrl(url) && Hls.isSupported()) {
       // Live stream — use HLS.js
       const hls = new Hls({ enableWorker: true, lowLatencyMode: true });
       hlsRef.current = hls;
-      hls.loadSource(url);
+      hls.loadSource(src);
       hls.attachMedia(video);
       hls.on(Hls.Events.MANIFEST_PARSED, () => {
         onStatusChange?.('readyToPlay');
@@ -59,7 +67,7 @@ export default function VideoPlayer({
       });
     } else if (isHlsUrl(url) && video.canPlayType('application/vnd.apple.mpegurl')) {
       // Safari — native HLS
-      video.src = url;
+      video.src = src;
       video.addEventListener('loadedmetadata', () => {
         onStatusChange?.('readyToPlay');
         if (playing) video.play().catch(() => {});
@@ -69,7 +77,7 @@ export default function VideoPlayer({
       }, { once: true });
     } else {
       // VOD — set src directly (MP4, MKV, etc.)
-      video.src = url;
+      video.src = src;
       video.addEventListener('loadedmetadata', () => onStatusChange?.('readyToPlay'), { once: true });
       video.addEventListener('canplay', () => {
         if (playing) video.play().catch(() => {});
