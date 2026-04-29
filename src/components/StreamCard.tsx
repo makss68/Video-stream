@@ -4,6 +4,7 @@ import { MaterialCommunityIcons, Ionicons } from '@expo/vector-icons';
 
 import { Stream } from '../types';
 import { colors, spacing, radius, typography } from '../theme';
+import { toProxyUrl } from '../utils/proxy';
 
 interface Props {
   stream: Stream;
@@ -44,7 +45,7 @@ const StreamCard = React.forwardRef<any, Props>(function StreamCard(
         <View style={[styles.stripe, { backgroundColor: stream.isLive ? colors.primary : colors.accent }]} />
         <View style={styles.thumbnail}>
           {stream.streamIcon ? (
-            <Image source={{ uri: stream.streamIcon }} style={styles.thumbnailImage} resizeMode="contain" />
+            <Image source={{ uri: toProxyUrl(stream.streamIcon) }} style={styles.thumbnailImage} resizeMode="contain" />
           ) : (
             <MaterialCommunityIcons
               name={stream.isLive ? 'television-play' : 'filmstrip'}

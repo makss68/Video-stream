@@ -5,6 +5,7 @@
 import React, { createElement, useEffect, useRef } from 'react';
 import { View, StyleSheet, ViewStyle, StyleProp } from 'react-native';
 import Hls from 'hls.js';
+import { toProxyUrl } from '../utils/proxy';
 
 export type PlayerStatus = 'idle' | 'loading' | 'readyToPlay' | 'error';
 
@@ -25,10 +26,18 @@ function isHlsUrl(url: string) {
   return /\/live\//i.test(url) || /\.m3u8/i.test(url);
 }
 
-/** Proxy HTTP stream URLs through the server-side relay to avoid mixed-content blocks. */
-function toProxyUrl(url: string): string {
-  if (url.startsWith('http:')) return `/api/stream?url=${encodeURIComponent(url)}`;
-  return url;
+
+// Custom HLS.js loader: intercepts every request (manifest + segments) and
+// routes any http: URL through the proxy so the browser never touches HTTP directly.
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const HlsDefaultLoader = Hls.DefaultConfig.loader as any;
+class ProxyLoader extends HlsDefaultLoader {
+  load(context: any, config: any, callbacks: any): void {
+    if (typeof context.url === 'string' && context.url.startsWith('http:')) {
+      context = { ...context, url: toProxyUrl(context.url) };
+    }
+    super.load(context, config, callbacks);
+  }
 }
 
 export default function VideoPlayer({
@@ -50,8 +59,11 @@ export default function VideoPlayer({
     const src = toProxyUrl(url);
 
     if (isHlsUrl(url) && Hls.isSupported()) {
-      // Live stream — use HLS.js
-      const hls = new Hls({ enableWorker: true, lowLatencyMode: true });
+      // Live stream — use HLS.js with ProxyLoader so every request (manifest +
+      // segments) is routed via the server-side relay, regardless of what URLs
+      // appear inside the manifest itself.
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const hls = new Hls({ enableWorker: true, loader: ProxyLoader as any });
       hlsRef.current = hls;
       hls.loadSource(src);
       hls.attachMedia(video);
