@@ -70,9 +70,10 @@ export interface Stream {
 }
 
 export type RootStackParamList = {
+  Gate: undefined;
   Login: undefined;
   StreamType: undefined;
   Categories: { type: StreamType };
   Streams: { categoryId: string; categoryName: string; type: StreamType };
-  Player: { stream: Stream };
+  Player: { stream: Stream; streams?: Stream[]; streamIndex?: number };
 };

@@ -7,7 +7,7 @@ GRADLE_PROPS="$PROJECT_DIR/android/gradle.properties"
 BUILD_GRADLE="$PROJECT_DIR/android/app/build.gradle"
 
 # ── 1. Fix Kotlin version mismatch ────────────────────────────────────────────
-echo "android.kotlinVersion=1.9.24" >> "$GRADLE_PROPS"
+echo "android.kotlinVersion=1.9.25" >> "$GRADLE_PROPS"
 echo "✓ Patched gradle.properties (kotlinVersion)"
 
 # ── 2. Inject release signing into app/build.gradle ──────────────────────────
@@ -61,5 +61,38 @@ with open(build_gradle_path, 'w') as f:
 
 print("✓ Patched app/build.gradle with release signing config")
 PYEOF
+
+# ── 3. Allow cleartext HTTP traffic (http:// server URLs) ─────────────────────
+MANIFEST="$PROJECT_DIR/android/app/src/main/AndroidManifest.xml"
+if ! grep -q "usesCleartextTraffic" "$MANIFEST"; then
+    python3 -c "
+import sys
+path = '$MANIFEST'
+with open(path, 'r') as f:
+    content = f.read()
+content = content.replace(
+    'android:supportsRtl=\"true\"',
+    'android:supportsRtl=\"true\" android:usesCleartextTraffic=\"true\"'
+)
+with open(path, 'w') as f:
+    f.write(content)
+print('✓ Patched AndroidManifest.xml (usesCleartextTraffic)')
+"
+else
+    echo "✓ AndroidManifest.xml already has usesCleartextTraffic"
+fi
+
+# ── 4. Copy vector icon fonts to Android assets ───────────────────────────────
+FONTS_DIR="$PROJECT_DIR/android/app/src/main/assets/fonts"
+mkdir -p "$FONTS_DIR"
+ICON_SRC="$PROJECT_DIR/node_modules/@expo/vector-icons/build/vendor/react-native-vector-icons/Fonts"
+COPIED=0
+for font in Ionicons MaterialCommunityIcons FontAwesome; do
+    if [ -f "$ICON_SRC/$font.ttf" ]; then
+        cp "$ICON_SRC/$font.ttf" "$FONTS_DIR/"
+        COPIED=$((COPIED+1))
+    fi
+done
+echo "✓ Copied $COPIED icon font(s) to Android assets/fonts"
 
 echo "✓ Android patch complete"

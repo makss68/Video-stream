@@ -66,7 +66,7 @@ export default function VideoPlayer({
     <VideoView
       player={player}
       style={style ?? styles.video}
-      contentFit="contain"
+      contentFit="cover"
       nativeControls={false}
       allowsFullscreen={false}
       allowsPictureInPicture={false}

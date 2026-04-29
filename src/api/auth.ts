@@ -12,22 +12,31 @@ export async function validateCredentials(
 ): Promise<void> {
   const cleanUrl = url.trim().replace(/\/+$/, '');
 
+  const endpoint = `${cleanUrl}/player_api.php`;
   let data: unknown;
   try {
-    const res = await axios.get<ApiCategory[]>(`${cleanUrl}/player_api.php`, {
+    const res = await axios.get<ApiCategory[]>(endpoint, {
       params: { username, password, action: 'get_live_categories' },
-      timeout: 10_000,
+      timeout: 15_000,
     });
     data = res.data;
   } catch (err: unknown) {
     if (axios.isAxiosError(err)) {
-      if (err.code === 'ECONNABORTED') throw new Error('Connection timed out');
-      if (err.response?.status === 401 || err.response?.status === 403) {
-        throw new Error('Invalid credentials');
+      const code = err.code ?? 'unknown';
+      const status = err.response?.status;
+      if (err.code === 'ECONNABORTED') {
+        throw new Error(`Timed out connecting to:\n${endpoint}`);
       }
-      throw new Error('Cannot reach server — check the URL');
+      if (status === 401 || status === 403) {
+        throw new Error('Invalid credentials (wrong username or password)');
+      }
+      if (status) {
+        throw new Error(`Server returned HTTP ${status}\n${endpoint}`);
+      }
+      throw new Error(`Cannot reach server [${code}]\n${endpoint}\n\nCheck URL and make sure the server is accessible from this network.`);
     }
-    throw new Error('Network error');
+    const msg = err instanceof Error ? err.message : String(err);
+    throw new Error(`Network error: ${msg}\n${endpoint}`);
   }
 
   if (!Array.isArray(data)) {

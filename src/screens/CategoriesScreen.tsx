@@ -1,4 +1,4 @@
-import React, { useEffect, useCallback } from 'react';
+import React, { useEffect, useCallback, useRef } from 'react';
 import {
   View,
   Text,
@@ -7,6 +7,7 @@ import {
   Pressable,
   ActivityIndicator,
   RefreshControl,
+  Platform,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { StatusBar } from 'expo-status-bar';
@@ -36,6 +37,18 @@ export default function CategoriesScreen() {
   const typeCategories = categories[type];
   const { title } = TYPE_LABELS[type];
 
+  const firstItemRef = useRef<any>(null);
+
+  useEffect(() => {
+    if (!Platform.isTV) return;
+    const unsub = navigation.addListener('transitionEnd' as any, (e: any) => {
+      if (!e.data.closing) {
+        firstItemRef.current?.setNativeProps({ hasTVPreferredFocus: true });
+      }
+    });
+    return unsub;
+  }, [navigation]);
+
   useEffect(() => {
     loadCategories(type);
   }, [type]);
@@ -63,7 +76,7 @@ export default function CategoriesScreen() {
       const next = typeCategories[index + 1];
       return (
         <View style={styles.row}>
-          <CategoryCard category={item} onPress={() => handleCategoryPress(item)} />
+          <CategoryCard ref={index === 0 ? firstItemRef : undefined} category={item} onPress={() => handleCategoryPress(item)} hasTVPreferredFocus={index === 0} />
           {next ? (
             <CategoryCard category={next} onPress={() => handleCategoryPress(next)} />
           ) : (
@@ -81,9 +94,11 @@ export default function CategoriesScreen() {
 
       {/* Header */}
       <View style={styles.header}>
-        <Pressable onPress={() => navigation.goBack()} style={styles.backBtn} hitSlop={12}>
-          <Ionicons name="chevron-back" size={22} color={colors.text} />
-        </Pressable>
+        {!Platform.isTV && (
+          <Pressable onPress={() => navigation.goBack()} style={styles.backBtn} hitSlop={12}>
+            <Ionicons name="chevron-back" size={22} color={colors.text} />
+          </Pressable>
+        )}
         <View style={styles.headerInfo}>
           <Text style={styles.headerTitle}>{title}</Text>
           {typeCategories.length > 0 && (

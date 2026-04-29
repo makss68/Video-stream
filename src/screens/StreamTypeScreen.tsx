@@ -1,10 +1,12 @@
-import React, { useRef, useEffect } from 'react';
+import React, { useRef, useEffect, useState } from 'react';
 import {
   View,
   Text,
   Pressable,
+  TouchableHighlight,
   StyleSheet,
   Animated,
+  Platform,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -17,6 +19,7 @@ import { useAuthStore } from '../store/authStore';
 import { useStreamStore } from '../store/streamStore';
 import { RootStackParamList, StreamType } from '../types';
 import { colors, spacing, radius, typography } from '../theme';
+import { getMacAddress } from '../utils/mac';
 
 type Nav = NativeStackNavigationProp<RootStackParamList, 'StreamType'>;
 
@@ -53,10 +56,18 @@ export default function StreamTypeScreen() {
   const { username, url, logout } = useAuthStore();
   const { clearAll } = useStreamStore();
 
-  const fadeAnim = useRef(new Animated.Value(0)).current;
-  const slideAnim = useRef(new Animated.Value(20)).current;
+  const [mac, setMac] = useState('');
 
   useEffect(() => {
+    getMacAddress().then(setMac);
+  }, []);
+
+  const isTV = Platform.isTV;
+  const fadeAnim = useRef(new Animated.Value(isTV ? 1 : 0)).current;
+  const slideAnim = useRef(new Animated.Value(isTV ? 0 : 20)).current;
+
+  useEffect(() => {
+    if (isTV) return;
     Animated.parallel([
       Animated.timing(fadeAnim, { toValue: 1, duration: 500, useNativeDriver: true }),
       Animated.spring(slideAnim, { toValue: 0, tension: 70, friction: 12, useNativeDriver: true }),
@@ -83,16 +94,17 @@ export default function StreamTypeScreen() {
       <View style={styles.header}>
         <View style={styles.headerLeft}>
           <View style={styles.logoIcon}>
-            <MaterialCommunityIcons name="cctv" size={20} color={colors.primary} />
+            <MaterialCommunityIcons name="human" size={20} color={colors.primary} />
           </View>
           <View>
             <Text style={styles.greeting}>Signed in as</Text>
             <Text style={styles.username}>{username}</Text>
+            {mac ? <Text style={styles.mac}>{mac}</Text> : null}
           </View>
         </View>
-        <Pressable onPress={handleLogout} style={styles.logoutBtn} hitSlop={12}>
+        <TouchableHighlight onPress={handleLogout} style={styles.logoutBtn} underlayColor="rgba(255,255,255,0.1)">
           <Ionicons name="log-out-outline" size={20} color={colors.textSecondary} />
-        </Pressable>
+        </TouchableHighlight>
       </View>
 
       {/* Server badge */}
@@ -103,55 +115,46 @@ export default function StreamTypeScreen() {
 
       {/* Title */}
       <Animated.View style={{ opacity: fadeAnim, transform: [{ translateY: slideAnim }] }}>
-        <Text style={styles.title}>What do you{'\n'}want to watch?</Text>
+        <Text style={styles.title}>What are we watching?</Text>
       </Animated.View>
 
       {/* Type cards */}
       <Animated.View
         style={[styles.cards, { opacity: fadeAnim, transform: [{ translateY: slideAnim }] }]}
       >
-        {CARDS.map((card) => (
-          <TypeCard key={card.type} card={card} onPress={() => handleSelect(card.type)} />
+        {CARDS.map((card, i) => (
+          <TypeCard key={card.type} card={card} onPress={() => handleSelect(card.type)} isFirst={i === 0} />
         ))}
       </Animated.View>
     </SafeAreaView>
   );
 }
 
-function TypeCard({ card, onPress }: { card: TypeCard; onPress: () => void }) {
-  const scaleAnim = useRef(new Animated.Value(1)).current;
-
-  const onPressIn = () =>
-    Animated.spring(scaleAnim, { toValue: 0.96, useNativeDriver: true, damping: 15 }).start();
-  const onPressOut = () =>
-    Animated.spring(scaleAnim, { toValue: 1, useNativeDriver: true, damping: 15 }).start();
-
+function TypeCard({ card, onPress, isFirst }: { card: TypeCard; onPress: () => void; isFirst?: boolean }) {
   return (
-    <Animated.View style={[styles.cardWrapper, { transform: [{ scale: scaleAnim }] }]}>
-      <Pressable onPress={onPress} onPressIn={onPressIn} onPressOut={onPressOut}>
-        <LinearGradient
-          colors={card.gradient}
-          start={{ x: 0, y: 0 }}
-          end={{ x: 1, y: 1 }}
-          style={styles.card}
-        >
-          {/* Decorative circles */}
-          <View style={[styles.decor1, { backgroundColor: card.accentColor + '18' }]} />
-          <View style={[styles.decor2, { backgroundColor: card.accentColor + '0C' }]} />
-
-          <View style={[styles.cardIconBox, { backgroundColor: card.accentColor + '22', borderColor: card.accentColor + '44' }]}>
-            <MaterialCommunityIcons name={card.icon as any} size={36} color={card.accentColor} />
-          </View>
-
-          <Text style={styles.cardLabel}>{card.label}</Text>
-          <Text style={styles.cardSubtitle}>{card.subtitle}</Text>
-
-          <View style={[styles.cardArrow, { backgroundColor: card.accentColor + '22' }]}>
-            <Ionicons name="arrow-forward" size={16} color={card.accentColor} />
-          </View>
-        </LinearGradient>
-      </Pressable>
-    </Animated.View>
+    <Pressable
+      style={({ focused }: any) => [styles.cardWrapper, focused && styles.cardWrapperFocused]}
+      onPress={onPress}
+      hasTVPreferredFocus={isFirst}
+    >
+      <LinearGradient
+        colors={card.gradient}
+        start={{ x: 0, y: 0 }}
+        end={{ x: 1, y: 1 }}
+        style={styles.card}
+      >
+        <View style={[styles.decor1, { backgroundColor: card.accentColor + '18' }]} />
+        <View style={[styles.decor2, { backgroundColor: card.accentColor + '0C' }]} />
+        <View style={[styles.cardIconBox, { backgroundColor: card.accentColor + '22', borderColor: card.accentColor + '44' }]}>
+          <MaterialCommunityIcons name={card.icon as any} size={36} color={card.accentColor} />
+        </View>
+        <Text style={styles.cardLabel}>{card.label}</Text>
+        <Text style={styles.cardSubtitle}>{card.subtitle}</Text>
+        <View style={[styles.cardArrow, { backgroundColor: card.accentColor + '22' }]}>
+          <Ionicons name="arrow-forward" size={16} color={card.accentColor} />
+        </View>
+      </LinearGradient>
+    </Pressable>
   );
 }
 
@@ -191,6 +194,11 @@ const styles = StyleSheet.create({
     ...typography.label,
     color: colors.text,
     fontWeight: '600',
+  },
+  mac: {
+    ...typography.caption,
+    color: colors.textMuted,
+    letterSpacing: 0.5,
   },
   logoutBtn: {
     width: 36,
@@ -237,8 +245,12 @@ const styles = StyleSheet.create({
     flex: 1,
     borderRadius: radius.xl,
     overflow: 'hidden',
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.06)',
+    borderWidth: 2,
+    borderColor: 'transparent',
+  },
+  cardWrapperFocused: {
+    borderColor: '#FFFFFF',
+    transform: [{ scale: 1.03 }],
   },
   card: {
     flex: 1,
@@ -246,6 +258,7 @@ const styles = StyleSheet.create({
     justifyContent: 'flex-end',
     minHeight: 180,
     overflow: 'hidden',
+    borderRadius: radius.xl,
   },
   decor1: {
     position: 'absolute',

@@ -7,7 +7,13 @@ import {
   ActivityIndicator,
   StatusBar,
   GestureResponderEvent,
+  Platform,
 } from 'react-native';
+
+// useTVEventHandler may be unavailable on some builds (non-TV bundles, web, etc.)
+const _rn = require('react-native') as any;
+const useTVEventHandlerSafe: (handler: (evt: any) => void) => void =
+  typeof _rn.useTVEventHandler === 'function' ? _rn.useTVEventHandler : () => {};
 import Animated, {
   useSharedValue,
   useAnimatedStyle,
@@ -16,13 +22,14 @@ import Animated, {
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import { useNavigation, useRoute, RouteProp } from '@react-navigation/native';
 
+import { useKeepAwake } from 'expo-keep-awake';
 import VideoPlayer, { PlayerStatus } from '../components/VideoPlayer';
 import { RootStackParamList } from '../types';
 import { colors, spacing, radius, typography } from '../theme';
 
 type Route = RouteProp<RootStackParamList, 'Player'>;
 
-const CONTROLS_TIMEOUT = 4000;
+const CONTROLS_TIMEOUT = 2000;
 
 function formatTime(s: number): string {
   if (!isFinite(s) || isNaN(s) || s < 0) return '--:--';
@@ -36,14 +43,19 @@ function formatTime(s: number): string {
 export default function PlayerScreen() {
   const navigation = useNavigation();
   const route = useRoute<Route>();
-  const { stream } = route.params;
+  const { stream, streams = [], streamIndex = 0 } = route.params;
 
   const [status, setStatus] = useState<PlayerStatus>('loading');
   const [errorMsg, setErrorMsg] = useState('');
   const [isPlaying, setIsPlaying] = useState(true);
   const [isMuted, setIsMuted] = useState(false);
+  useKeepAwake(); // prevent screen sleep while player screen is active
   const [controlsVisible, setControlsVisible] = useState(true);
+  const controlsVisibleRef = useRef(controlsVisible);
   const [retryKey, setRetryKey] = useState(0);
+  const [retryAttempt, setRetryAttempt] = useState(0);
+  const retryCountRef = useRef(0);
+  const MAX_RETRIES = 5;
 
   // VOD progress
   const [currentTime, setCurrentTime] = useState(0);
@@ -59,12 +71,14 @@ export default function PlayerScreen() {
     hideTimer.current = setTimeout(() => {
       controlsOpacity.value = withTiming(0, { duration: 300 });
       setControlsVisible(false);
+      controlsVisibleRef.current = false;
     }, CONTROLS_TIMEOUT);
   }, [controlsOpacity]);
 
   const showControls = useCallback(() => {
     controlsOpacity.value = withTiming(1, { duration: 200 });
     setControlsVisible(true);
+    controlsVisibleRef.current = true;
     scheduleHide();
   }, [controlsOpacity, scheduleHide]);
 
@@ -73,6 +87,7 @@ export default function PlayerScreen() {
       if (hideTimer.current) clearTimeout(hideTimer.current);
       controlsOpacity.value = withTiming(0, { duration: 200 });
       setControlsVisible(false);
+      controlsVisibleRef.current = false;
     } else {
       showControls();
     }
@@ -85,8 +100,42 @@ export default function PlayerScreen() {
 
   const handleStatusChange = useCallback((s: PlayerStatus, msg?: string) => {
     setStatus(s);
-    if (s === 'error') setErrorMsg(msg ?? 'Stream unavailable');
-  }, []);
+    if (s === 'error') {
+      setErrorMsg(msg ?? 'Stream unavailable');
+      const attempt = retryCountRef.current + 1;
+      retryCountRef.current = attempt;
+      setRetryAttempt(attempt);
+      if (attempt <= MAX_RETRIES) {
+        setTimeout(() => {
+          setStatus('loading');
+          setErrorMsg('');
+          setIsPlaying(true);
+          setRetryKey((k) => k + 1);
+        }, 2000);
+      } else {
+        setTimeout(() => navigation.goBack(), 1500);
+      }
+    }
+  }, [navigation]);
+
+  // Arrow down/up → next/prev stream (only when controls are hidden)
+  useTVEventHandlerSafe((evt) => {
+    if (!Platform.isTV) return;
+    if (evt.eventKeyAction !== 1 || controlsVisibleRef.current) return;
+    let targetIndex: number | null = null;
+    if (evt.eventType === 'down' && streamIndex + 1 < streams.length) {
+      targetIndex = streamIndex + 1;
+    } else if (evt.eventType === 'up' && streamIndex - 1 >= 0) {
+      targetIndex = streamIndex - 1;
+    }
+    if (targetIndex !== null) {
+      (navigation as any).replace('Player', {
+        stream: streams[targetIndex],
+        streams,
+        streamIndex: targetIndex,
+      });
+    }
+  });
 
   const handleProgress = useCallback((ct: number, dur: number) => {
     setCurrentTime(ct);
@@ -98,15 +147,6 @@ export default function PlayerScreen() {
     const ratio = e.nativeEvent.locationX / progressBarWidth.current;
     setSeekTo(Math.max(0, Math.min(ratio * duration, duration)));
     showControls();
-  };
-
-  const handleRetry = () => {
-    setStatus('loading');
-    setErrorMsg('');
-    setIsPlaying(true);
-    setCurrentTime(0);
-    setDuration(0);
-    setRetryKey((k) => k + 1);
   };
 
   const animatedControls = useAnimatedStyle(() => ({
@@ -149,13 +189,11 @@ export default function PlayerScreen() {
           <MaterialCommunityIcons name="cctv-off" size={56} color={colors.textMuted} />
           <Text style={styles.errorTitle}>Unavailable</Text>
           <Text style={styles.errorSub}>{errorMsg || 'Could not connect to this stream'}</Text>
-          <Pressable onPress={handleRetry} style={styles.retryBtn}>
-            <Ionicons name="refresh" size={16} color={colors.white} />
-            <Text style={styles.retryText}>Retry</Text>
-          </Pressable>
-          <Pressable onPress={() => navigation.goBack()} style={styles.backBtnError}>
-            <Text style={styles.backBtnErrorText}>Go Back</Text>
-          </Pressable>
+          {retryAttempt <= MAX_RETRIES ? (
+            <Text style={styles.retryStatus}>Retrying {retryAttempt}/{MAX_RETRIES}…</Text>
+          ) : (
+            <Text style={styles.retryStatus}>Going back…</Text>
+          )}
         </View>
       )}
 
@@ -206,16 +244,17 @@ export default function PlayerScreen() {
           <View style={styles.controls}>
             <Pressable
               onPress={() => { setIsPlaying((v) => !v); showControls(); }}
-              style={styles.controlBtn}
-              hitSlop={16}
+              onFocus={showControls}
+              style={({ focused }: any) => [styles.controlBtn, focused && styles.controlBtnFocused]}
+              hasTVPreferredFocus
             >
               <Ionicons name={isPlaying ? 'pause' : 'play'} size={28} color={colors.white} />
             </Pressable>
             <View style={{ flex: 1 }} />
             <Pressable
               onPress={() => { setIsMuted((v) => !v); showControls(); }}
-              style={styles.controlBtn}
-              hitSlop={16}
+              onFocus={showControls}
+              style={({ focused }: any) => [styles.controlBtn, focused && styles.controlBtnFocused]}
             >
               <Ionicons
                 name={isMuted ? 'volume-mute' : 'volume-high'}
@@ -244,14 +283,7 @@ const styles = StyleSheet.create({
   },
   errorTitle: { ...typography.h2, color: colors.text },
   errorSub: { ...typography.body, color: colors.textMuted, textAlign: 'center' },
-  retryBtn: {
-    flexDirection: 'row', alignItems: 'center', gap: spacing.sm,
-    backgroundColor: colors.primary, borderRadius: radius.md,
-    paddingHorizontal: spacing.xl, paddingVertical: spacing.sm, marginTop: spacing.sm,
-  },
-  retryText: { ...typography.body, color: colors.white, fontWeight: '600' },
-  backBtnError: { paddingHorizontal: spacing.xl, paddingVertical: spacing.sm },
-  backBtnErrorText: { ...typography.body, color: colors.textMuted },
+  retryStatus: { ...typography.body, color: colors.textMuted },
   topBar: {
     position: 'absolute', top: 0, left: 0, right: 0,
     flexDirection: 'row', alignItems: 'center',
@@ -304,4 +336,5 @@ const styles = StyleSheet.create({
   },
   controls: { flexDirection: 'row', alignItems: 'center', gap: spacing.md },
   controlBtn: { width: 44, height: 44, justifyContent: 'center', alignItems: 'center' },
+  controlBtnFocused: { backgroundColor: 'rgba(255,255,255,0.2)', borderRadius: 22 },
 });

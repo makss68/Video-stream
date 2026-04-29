@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useCallback, useMemo } from 'react';
+import React, { useEffect, useState, useCallback, useMemo, useRef } from 'react';
 import {
   View,
   Text,
@@ -8,6 +8,7 @@ import {
   ActivityIndicator,
   TextInput,
   RefreshControl,
+  Platform,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { StatusBar } from 'expo-status-bar';
@@ -30,6 +31,17 @@ export default function StreamsScreen() {
 
   const { streams, loadingStreams, error, loadStreams, invalidateStreams, clearError } = useStreamStore();
   const [search, setSearch] = useState('');
+  const firstItemRef = useRef<any>(null);
+
+  useEffect(() => {
+    if (!Platform.isTV) return;
+    const unsub = navigation.addListener('transitionEnd' as any, (e: any) => {
+      if (!e.data.closing) {
+        firstItemRef.current?.setNativeProps({ hasTVPreferredFocus: true });
+      }
+    });
+    return unsub;
+  }, [navigation]);
 
   const cacheKey = `${type}:${categoryId}`;
   const categoryStreams = streams[cacheKey] ?? [];
@@ -45,8 +57,9 @@ export default function StreamsScreen() {
   }, [categoryStreams, search]);
 
   const handleStreamPress = useCallback(
-    (stream: Stream) => navigation.navigate('Player', { stream }),
-    [navigation],
+    (stream: Stream, index: number) =>
+      navigation.navigate('Player', { stream, streams: filtered, streamIndex: index }),
+    [navigation, filtered],
   );
 
   const handleRefresh = useCallback(() => {
@@ -55,8 +68,8 @@ export default function StreamsScreen() {
   }, [type, categoryId, invalidateStreams, loadStreams]);
 
   const renderItem = useCallback(
-    ({ item }: { item: Stream }) => (
-      <StreamCard stream={item} onPress={() => handleStreamPress(item)} />
+    ({ item, index }: { item: Stream; index: number }) => (
+      <StreamCard ref={index === 0 ? firstItemRef : undefined} stream={item} onPress={() => handleStreamPress(item, index)} hasTVPreferredFocus={index === 0} />
     ),
     [handleStreamPress],
   );
@@ -77,9 +90,11 @@ export default function StreamsScreen() {
 
       {/* Header */}
       <View style={styles.header}>
-        <Pressable onPress={() => navigation.goBack()} style={styles.backBtn} hitSlop={12}>
-          <Ionicons name="chevron-back" size={22} color={colors.text} />
-        </Pressable>
+        {!Platform.isTV && (
+          <Pressable onPress={() => navigation.goBack()} style={styles.backBtn} hitSlop={12}>
+            <Ionicons name="chevron-back" size={22} color={colors.text} />
+          </Pressable>
+        )}
         <View style={styles.headerInfo}>
           <Text style={styles.headerTitle} numberOfLines={1}>{categoryName}</Text>
           <Text style={styles.headerSub}>
@@ -133,10 +148,10 @@ export default function StreamsScreen() {
               tintColor={colors.primary}
             />
           }
-          removeClippedSubviews
-          initialNumToRender={12}
+          removeClippedSubviews={!Platform.isTV}
+          initialNumToRender={Platform.isTV ? 30 : 12}
           maxToRenderPerBatch={12}
-          windowSize={5}
+          windowSize={Platform.isTV ? 21 : 5}
         />
       )}
     </SafeAreaView>
