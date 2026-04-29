@@ -7,20 +7,18 @@ export default async function handler(req, res) {
 
   const decoded = decodeURIComponent(url);
 
-  // Forward browser-style headers — IPTV servers commonly reject requests with
-  // a "node"/"undici" User-Agent or no Accept header, returning 403.
+  // Forward browser-style headers but strip anything that flags a request as proxied.
+  // Notably: no X-Forwarded-For (IPTV WAFs reject when present) and no Referer
+  // (avoids leaking the Vercel domain, which the upstream has never seen).
   const upstreamHeaders = {
     'User-Agent':
       req.headers['user-agent'] ||
       'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36',
     Accept: req.headers['accept'] || '*/*',
+    'Accept-Language': req.headers['accept-language'] || 'en-US,en;q=0.9',
+    'Accept-Encoding': 'gzip, deflate',
   };
-  if (req.headers['accept-language']) upstreamHeaders['Accept-Language'] = req.headers['accept-language'];
   if (req.headers['range']) upstreamHeaders['Range'] = req.headers['range'];
-
-  const clientIp = ((req.headers['x-forwarded-for'] || req.headers['x-real-ip']) ?? '')
-    .split(',')[0].trim();
-  if (clientIp) upstreamHeaders['X-Forwarded-For'] = clientIp;
 
   let response;
   try {

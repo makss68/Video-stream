@@ -1,6 +1,6 @@
 import axios from 'axios';
-import { Platform } from 'react-native';
 import { ApiCategory } from '../types';
+import { shouldUseProxy } from '../utils/proxy';
 
 /**
  * Validates credentials by calling get_live_categories.
@@ -13,13 +13,13 @@ export async function validateCredentials(
 ): Promise<void> {
   const cleanUrl = url.trim().replace(/\/+$/, '');
 
-  // On web the page is HTTPS; direct HTTP calls are blocked (mixed content).
-  // Route through the server-side proxy instead.
-  const endpoint = Platform.OS === 'web' ? '/api/proxy' : `${cleanUrl}/player_api.php`;
-  const params =
-    Platform.OS === 'web'
-      ? { serverUrl: cleanUrl, username, password, action: 'get_live_categories' }
-      : { username, password, action: 'get_live_categories' };
+  // On HTTPS web, route through the server-side proxy to avoid mixed-content blocks.
+  // On HTTP localhost or native, hit the IPTV server directly.
+  const useProxy = shouldUseProxy();
+  const endpoint = useProxy ? '/api/proxy' : `${cleanUrl}/player_api.php`;
+  const params = useProxy
+    ? { serverUrl: cleanUrl, username, password, action: 'get_live_categories' }
+    : { username, password, action: 'get_live_categories' };
 
   let data: unknown;
   try {

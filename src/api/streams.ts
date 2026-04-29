@@ -2,6 +2,7 @@ import axios from 'axios';
 import { Platform } from 'react-native';
 import { useAuthStore } from '../store/authStore';
 import { ApiCategory, ApiStream, ApiVodStream, Category, Stream, StreamType } from '../types';
+import { shouldUseProxy } from '../utils/proxy';
 
 // Browsers can't play raw MPEG-TS — use HLS on web for live streams
 const LIVE_EXT = Platform.OS === 'web' ? 'm3u8' : 'ts';
@@ -81,7 +82,7 @@ function mapVodStream(apiStream: ApiVodStream): Stream {
 // ─── API calls ────────────────────────────────────────────────────────────────
 function buildApiUrl(action: string, extra?: Record<string, string>) {
   const { url, username, password } = useAuthStore.getState();
-  if (Platform.OS === 'web') {
+  if (shouldUseProxy()) {
     return {
       url: '/api/proxy',
       params: { serverUrl: url, username, password, action, ...extra },
