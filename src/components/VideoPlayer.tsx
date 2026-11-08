@@ -7,7 +7,14 @@ import { View, StyleSheet, ViewStyle, StyleProp } from 'react-native';
 import Hls from 'hls.js';
 import { toProxyUrl } from '../utils/proxy';
 
-export type PlayerStatus = 'idle' | 'loading' | 'readyToPlay' | 'error';
+export type PlayerStatus = 'idle' | 'loading' | 'buffering' | 'readyToPlay' | 'error';
+
+/** No manifest / first frame within this time → report an error so the screen reloads. */
+const CONNECT_TIMEOUT_MS = 20_000;
+/** Rebuffering (or a frozen picture) for this long → report a stall. */
+const STALL_TIMEOUT_MS = 12_000;
+/** Fatal HLS network errors we retry in place before asking for a full reload. */
+const MAX_INPLACE_RECOVERIES = 2;
 
 interface Props {
   url: string;
@@ -46,6 +53,10 @@ export default function VideoPlayer({
 }: Props) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const hlsRef = useRef<Hls | null>(null);
+  const statusCb = useRef(onStatusChange);
+  statusCb.current = onStatusChange;
+  const playingRef = useRef(playing);
+  playingRef.current = playing;
 
   // ── Initialize player whenever URL changes ────────────────────────────────
   useEffect(() => {
@@ -55,6 +66,51 @@ export default function VideoPlayer({
     hlsRef.current?.destroy();
     hlsRef.current = null;
     onStatusChange?.('loading');
+
+    // ── Watchdogs: connect timeout, rebuffer timeout, frozen-picture detection ──
+    let ready = false;
+    let failed = false;
+    let bufferingSince = 0;
+    let lastTime = -1;
+    let frozenSince = 0;
+    const fail = (msg: string) => {
+      if (failed) return;
+      failed = true;
+      statusCb.current?.('error', msg);
+    };
+    const connectTimer = setTimeout(() => { if (!ready) fail('Connection timed out'); }, CONNECT_TIMEOUT_MS);
+    const markReady = () => {
+      ready = true;
+      bufferingSince = 0;
+      clearTimeout(connectTimer);
+      statusCb.current?.('readyToPlay');
+    };
+    const onWaiting = () => {
+      if (!ready || failed) return;
+      bufferingSince = bufferingSince || Date.now();
+      statusCb.current?.('buffering');
+    };
+    const onPlaying = () => { if (ready && !failed) markReady(); };
+    const watchdog = setInterval(() => {
+      if (!ready || failed) return;
+      const now = Date.now();
+      if (bufferingSince && now - bufferingSince > STALL_TIMEOUT_MS) return fail('Stream stalled');
+      // Picture frozen while we think we're playing (no 'waiting' event fired)
+      if (playingRef.current && !video.paused && !bufferingSince) {
+        if (video.currentTime === lastTime) {
+          frozenSince = frozenSince || now;
+          if (now - frozenSince > STALL_TIMEOUT_MS) return fail('Stream stalled');
+        } else {
+          frozenSince = 0;
+        }
+      } else {
+        frozenSince = 0;
+      }
+      lastTime = video.currentTime;
+    }, 2000);
+    video.addEventListener('waiting', onWaiting);
+    video.addEventListener('stalled', onWaiting);
+    video.addEventListener('playing', onPlaying);
 
     const src = toProxyUrl(url);
 
@@ -67,39 +123,50 @@ export default function VideoPlayer({
       hlsRef.current = hls;
       hls.loadSource(src);
       hls.attachMedia(video);
+      let recoveries = 0;
       hls.on(Hls.Events.MANIFEST_PARSED, () => {
-        onStatusChange?.('readyToPlay');
-        if (playing) video.play().catch(() => {});
+        markReady();
+        if (playingRef.current) video.play().catch(() => {});
       });
+      hls.on(Hls.Events.FRAG_LOADED, () => { recoveries = 0; });
       hls.on(Hls.Events.ERROR, (_, data) => {
         if (!data.fatal) return;
-        if (data.type === Hls.ErrorTypes.NETWORK_ERROR) hls.startLoad();
-        else if (data.type === Hls.ErrorTypes.MEDIA_ERROR) hls.recoverMediaError();
-        else onStatusChange?.('error', data.details);
+        const code = data.response?.code;
+        // The server answered with an error (blocked / limit reached): retrying
+        // in place just hammers it — let the screen back off and reload instead.
+        if (code && code >= 400) return fail(`Server error ${code}`);
+        if (recoveries < MAX_INPLACE_RECOVERIES) {
+          recoveries++;
+          if (data.type === Hls.ErrorTypes.NETWORK_ERROR) { onWaiting(); hls.startLoad(); return; }
+          if (data.type === Hls.ErrorTypes.MEDIA_ERROR) { onWaiting(); hls.recoverMediaError(); return; }
+        }
+        fail(data.details || 'Playback error');
       });
     } else if (isHlsUrl(url) && video.canPlayType('application/vnd.apple.mpegurl')) {
       // Safari — native HLS
       video.src = src;
       video.addEventListener('loadedmetadata', () => {
-        onStatusChange?.('readyToPlay');
-        if (playing) video.play().catch(() => {});
+        markReady();
+        if (playingRef.current) video.play().catch(() => {});
       }, { once: true });
-      video.addEventListener('error', () => {
-        onStatusChange?.('error', video.error?.message ?? 'Playback error');
-      }, { once: true });
+      video.addEventListener('error', () => fail(video.error?.message ?? 'Playback error'), { once: true });
     } else {
       // VOD — set src directly (MP4, MKV, etc.)
       video.src = src;
-      video.addEventListener('loadedmetadata', () => onStatusChange?.('readyToPlay'), { once: true });
+      video.addEventListener('loadedmetadata', markReady, { once: true });
       video.addEventListener('canplay', () => {
-        if (playing) video.play().catch(() => {});
+        if (playingRef.current) video.play().catch(() => {});
       }, { once: true });
-      video.addEventListener('error', () => {
-        onStatusChange?.('error', video.error?.message ?? 'Playback error');
-      }, { once: true });
+      video.addEventListener('error', () => fail(video.error?.message ?? 'Playback error'), { once: true });
     }
 
     return () => {
+      failed = true; // silence late events from the torn-down player
+      clearTimeout(connectTimer);
+      clearInterval(watchdog);
+      video.removeEventListener('waiting', onWaiting);
+      video.removeEventListener('stalled', onWaiting);
+      video.removeEventListener('playing', onPlaying);
       hlsRef.current?.destroy();
       hlsRef.current = null;
     };

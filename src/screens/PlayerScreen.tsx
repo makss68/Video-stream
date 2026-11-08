@@ -29,7 +29,11 @@ import { colors, spacing, radius, typography } from '../theme';
 
 type Route = RouteProp<RootStackParamList, 'Player'>;
 
-const CONTROLS_TIMEOUT = 2000;
+const CONTROLS_TIMEOUT = 4000;
+const SKIP_SECONDS = 10;
+/** Wait before reload attempt n (ms). Backing off avoids hammering a provider that is throttling us. */
+const RETRY_BACKOFF_MS = [1000, 2000, 4000, 8000, 15000];
+const MAX_RETRIES = RETRY_BACKOFF_MS.length;
 
 function formatTime(s: number): string {
   if (!isFinite(s) || isNaN(s) || s < 0) return '--:--';
@@ -47,15 +51,25 @@ export default function PlayerScreen() {
 
   const [status, setStatus] = useState<PlayerStatus>('loading');
   const [errorMsg, setErrorMsg] = useState('');
-  const [isPlaying, setIsPlaying] = useState(true);
+  const [isPlaying, setIsPlayingState] = useState(true);
+  const setIsPlaying = useCallback((v: boolean | ((p: boolean) => boolean)) => {
+    setIsPlayingState((prev) => {
+      const next = typeof v === 'function' ? v(prev) : v;
+      isPlayingRef.current = next;
+      return next;
+    });
+  }, []);
   const [isMuted, setIsMuted] = useState(false);
   useKeepAwake(); // prevent screen sleep while player screen is active
   const [controlsVisible, setControlsVisible] = useState(true);
   const controlsVisibleRef = useRef(controlsVisible);
+  const isPlayingRef = useRef(true);
   const [retryKey, setRetryKey] = useState(0);
   const [retryAttempt, setRetryAttempt] = useState(0);
   const retryCountRef = useRef(0);
-  const MAX_RETRIES = 5;
+  const retryTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const countdownTimer = useRef<ReturnType<typeof setInterval> | null>(null);
+  const [retryIn, setRetryIn] = useState(0); // seconds until the next automatic reload
 
   // VOD progress
   const [currentTime, setCurrentTime] = useState(0);
@@ -69,6 +83,7 @@ export default function PlayerScreen() {
   const scheduleHide = useCallback(() => {
     if (hideTimer.current) clearTimeout(hideTimer.current);
     hideTimer.current = setTimeout(() => {
+      if (!isPlayingRef.current) return; // keep controls up while paused
       controlsOpacity.value = withTiming(0, { duration: 300 });
       setControlsVisible(false);
       controlsVisibleRef.current = false;
@@ -98,44 +113,108 @@ export default function PlayerScreen() {
     return () => { if (hideTimer.current) clearTimeout(hideTimer.current); };
   }, []);
 
+  const clearRetryTimers = useCallback(() => {
+    if (retryTimer.current) clearTimeout(retryTimer.current);
+    if (countdownTimer.current) clearInterval(countdownTimer.current);
+    retryTimer.current = null;
+    countdownTimer.current = null;
+  }, []);
+
+  useEffect(() => clearRetryTimers, [clearRetryTimers]);
+
+  /** Remount the player (fresh connection). The old one is destroyed first, so the
+   *  provider never sees two simultaneous connections on a 1-connection line. */
+  const reload = useCallback(() => {
+    clearRetryTimers();
+    setRetryIn(0);
+    setStatus('loading');
+    setErrorMsg('');
+    setIsPlaying(true);
+    setRetryKey((k) => k + 1);
+  }, [clearRetryTimers, setIsPlaying]);
+
+  const handleRetryNow = useCallback(() => {
+    retryCountRef.current = 0;
+    setRetryAttempt(0);
+    reload();
+  }, [reload]);
+
   const handleStatusChange = useCallback((s: PlayerStatus, msg?: string) => {
-    setStatus(s);
     if (s === 'error') {
+      if (retryTimer.current) return; // a reload is already scheduled
+      setStatus('error');
       setErrorMsg(msg ?? 'Stream unavailable');
       const attempt = retryCountRef.current + 1;
       retryCountRef.current = attempt;
       setRetryAttempt(attempt);
       if (attempt <= MAX_RETRIES) {
-        setTimeout(() => {
-          setStatus('loading');
-          setErrorMsg('');
-          setIsPlaying(true);
-          setRetryKey((k) => k + 1);
-        }, 2000);
-      } else {
-        setTimeout(() => navigation.goBack(), 1500);
+        const delay = RETRY_BACKOFF_MS[attempt - 1];
+        setRetryIn(Math.ceil(delay / 1000));
+        countdownTimer.current = setInterval(() => setRetryIn((n) => Math.max(0, n - 1)), 1000);
+        retryTimer.current = setTimeout(reload, delay);
       }
+      return;
     }
-  }, [navigation]);
+    // Ignore stale non-error events while a reload is pending
+    if (retryTimer.current) return;
+    setStatus(s);
+    if (s === 'readyToPlay') {
+      retryCountRef.current = 0;
+      setRetryAttempt(0);
+    }
+  }, [reload]);
+
+  const hasPrev = streamIndex > 0;
+  const hasNext = streamIndex + 1 < streams.length;
+
+  const goToIndex = useCallback((target: number) => {
+    if (target < 0 || target >= streams.length) return;
+    (navigation as any).replace('Player', {
+      stream: streams[target],
+      streams,
+      streamIndex: target,
+    });
+  }, [navigation, streams]);
+
+  const skipBy = useCallback((delta: number) => {
+    setSeekTo(Math.max(0, Math.min(currentTime + delta, duration || Infinity)));
+    showControls();
+  }, [currentTime, duration, showControls]);
 
   // Arrow down/up → next/prev stream (only when controls are hidden)
   useTVEventHandlerSafe((evt) => {
     if (!Platform.isTV) return;
     if (evt.eventKeyAction !== 1 || controlsVisibleRef.current) return;
-    let targetIndex: number | null = null;
-    if (evt.eventType === 'down' && streamIndex + 1 < streams.length) {
-      targetIndex = streamIndex + 1;
-    } else if (evt.eventType === 'up' && streamIndex - 1 >= 0) {
-      targetIndex = streamIndex - 1;
-    }
-    if (targetIndex !== null) {
-      (navigation as any).replace('Player', {
-        stream: streams[targetIndex],
-        streams,
-        streamIndex: targetIndex,
-      });
-    }
+    if (evt.eventType === 'down') goToIndex(streamIndex + 1);
+    else if (evt.eventType === 'up') goToIndex(streamIndex - 1);
   });
+
+  // Web keyboard shortcuts: space/k play-pause, m mute, f fullscreen,
+  // ←/→ seek (VOD), ↑/↓ or p/n prev/next channel, Esc back
+  useEffect(() => {
+    if (Platform.OS !== 'web') return;
+    const onKey = (e: KeyboardEvent) => {
+      switch (e.key) {
+        case ' ': case 'k': e.preventDefault(); setIsPlaying((v) => !v); break;
+        case 'm': setIsMuted((v) => !v); break;
+        case 'f': {
+          const d = document as any;
+          if (d.fullscreenElement) d.exitFullscreen?.();
+          else d.documentElement.requestFullscreen?.();
+          break;
+        }
+        case 'ArrowLeft': if (!stream.isLive) skipBy(-SKIP_SECONDS); break;
+        case 'ArrowRight': if (!stream.isLive) skipBy(SKIP_SECONDS); break;
+        case 'ArrowUp': case 'p': goToIndex(streamIndex - 1); break;
+        case 'ArrowDown': case 'n': goToIndex(streamIndex + 1); break;
+        case 'Escape': navigation.goBack(); return;
+        default: return;
+      }
+      showControls();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [goToIndex, skipBy, showControls, navigation, streamIndex, stream.isLive, setIsPlaying]);
 
   const handleProgress = useCallback((ct: number, dur: number) => {
     setCurrentTime(ct);
@@ -175,25 +254,53 @@ export default function PlayerScreen() {
         />
       </Pressable>
 
-      {/* Loading */}
+      {/* Connecting / reconnecting */}
       {(status === 'idle' || status === 'loading') && (
         <View style={styles.loadingOverlay} pointerEvents="none">
           <ActivityIndicator size="large" color={colors.primary} />
-          <Text style={styles.loadingText}>Connecting…</Text>
+          <Text style={styles.loadingText}>
+            {retryAttempt > 0 ? `Reconnecting… (attempt ${retryAttempt}/${MAX_RETRIES})` : 'Connecting…'}
+          </Text>
         </View>
       )}
 
-      {/* Error */}
+      {/* Rebuffering mid-stream */}
+      {status === 'buffering' && (
+        <View style={styles.bufferingOverlay} pointerEvents="none">
+          <ActivityIndicator size="small" color={colors.white} />
+          <Text style={styles.bufferingText}>Buffering…</Text>
+        </View>
+      )}
+
+      {/* Error: automatic reload with countdown, or manual retry once attempts run out */}
       {status === 'error' && (
         <View style={styles.errorOverlay}>
           <MaterialCommunityIcons name="cctv-off" size={56} color={colors.textMuted} />
-          <Text style={styles.errorTitle}>Unavailable</Text>
+          <Text style={styles.errorTitle}>{retryAttempt <= MAX_RETRIES ? 'Connection lost' : 'Unavailable'}</Text>
           <Text style={styles.errorSub}>{errorMsg || 'Could not connect to this stream'}</Text>
           {retryAttempt <= MAX_RETRIES ? (
-            <Text style={styles.retryStatus}>Retrying {retryAttempt}/{MAX_RETRIES}…</Text>
+            <Text style={styles.retryStatus}>
+              Reloading in {retryIn}s · attempt {retryAttempt}/{MAX_RETRIES}
+            </Text>
           ) : (
-            <Text style={styles.retryStatus}>Going back…</Text>
+            <Text style={styles.retryStatus}>Gave up after {MAX_RETRIES} attempts</Text>
           )}
+          <View style={styles.errorActions}>
+            <Pressable
+              onPress={handleRetryNow}
+              hasTVPreferredFocus
+              style={({ focused }: any) => [styles.errorBtn, styles.errorBtnPrimary, focused && styles.errorBtnFocused]}
+            >
+              <Ionicons name="refresh" size={18} color={colors.white} />
+              <Text style={styles.errorBtnText}>Retry now</Text>
+            </Pressable>
+            <Pressable
+              onPress={() => navigation.goBack()}
+              style={({ focused }: any) => [styles.errorBtn, focused && styles.errorBtnFocused]}
+            >
+              <Text style={styles.errorBtnText}>Back</Text>
+            </Pressable>
+          </View>
         </View>
       )}
 
@@ -242,6 +349,25 @@ export default function PlayerScreen() {
           )}
 
           <View style={styles.controls}>
+            {streams.length > 1 && (
+              <Pressable
+                onPress={() => goToIndex(streamIndex - 1)}
+                disabled={!hasPrev}
+                onFocus={showControls}
+                style={({ focused }: any) => [styles.controlBtn, !hasPrev && styles.controlBtnDisabled, focused && styles.controlBtnFocused]}
+              >
+                <Ionicons name="play-skip-back" size={22} color={colors.white} />
+              </Pressable>
+            )}
+            {isVod && (
+              <Pressable
+                onPress={() => skipBy(-SKIP_SECONDS)}
+                onFocus={showControls}
+                style={({ focused }: any) => [styles.controlBtn, focused && styles.controlBtnFocused]}
+              >
+                <MaterialCommunityIcons name="rewind-10" size={26} color={colors.white} />
+              </Pressable>
+            )}
             <Pressable
               onPress={() => { setIsPlaying((v) => !v); showControls(); }}
               onFocus={showControls}
@@ -250,7 +376,29 @@ export default function PlayerScreen() {
             >
               <Ionicons name={isPlaying ? 'pause' : 'play'} size={28} color={colors.white} />
             </Pressable>
+            {isVod && (
+              <Pressable
+                onPress={() => skipBy(SKIP_SECONDS)}
+                onFocus={showControls}
+                style={({ focused }: any) => [styles.controlBtn, focused && styles.controlBtnFocused]}
+              >
+                <MaterialCommunityIcons name="fast-forward-10" size={26} color={colors.white} />
+              </Pressable>
+            )}
+            {streams.length > 1 && (
+              <Pressable
+                onPress={() => goToIndex(streamIndex + 1)}
+                disabled={!hasNext}
+                onFocus={showControls}
+                style={({ focused }: any) => [styles.controlBtn, !hasNext && styles.controlBtnDisabled, focused && styles.controlBtnFocused]}
+              >
+                <Ionicons name="play-skip-forward" size={22} color={colors.white} />
+              </Pressable>
+            )}
             <View style={{ flex: 1 }} />
+            {streams.length > 1 && (
+              <Text style={styles.timeText}>{streamIndex + 1} / {streams.length}</Text>
+            )}
             <Pressable
               onPress={() => { setIsMuted((v) => !v); showControls(); }}
               onFocus={showControls}
@@ -281,6 +429,22 @@ const styles = StyleSheet.create({
     justifyContent: 'center', alignItems: 'center', gap: spacing.md,
     paddingHorizontal: spacing.xl,
   },
+  bufferingOverlay: {
+    position: 'absolute', top: spacing.xl, alignSelf: 'center',
+    flexDirection: 'row', alignItems: 'center', gap: spacing.sm,
+    backgroundColor: 'rgba(0,0,0,0.6)', borderRadius: radius.md,
+    paddingHorizontal: spacing.md, paddingVertical: spacing.sm,
+  },
+  bufferingText: { ...typography.caption, color: colors.white, fontWeight: '600' },
+  errorActions: { flexDirection: 'row', gap: spacing.sm, marginTop: spacing.sm },
+  errorBtn: {
+    flexDirection: 'row', alignItems: 'center', gap: spacing.xs,
+    paddingHorizontal: spacing.lg, paddingVertical: spacing.sm,
+    borderRadius: radius.md, backgroundColor: 'rgba(255,255,255,0.12)',
+  },
+  errorBtnPrimary: { backgroundColor: colors.primary },
+  errorBtnFocused: { borderWidth: 2, borderColor: colors.white },
+  errorBtnText: { ...typography.body, color: colors.white, fontWeight: '600' },
   errorTitle: { ...typography.h2, color: colors.text },
   errorSub: { ...typography.body, color: colors.textMuted, textAlign: 'center' },
   retryStatus: { ...typography.body, color: colors.textMuted },
@@ -336,5 +500,6 @@ const styles = StyleSheet.create({
   },
   controls: { flexDirection: 'row', alignItems: 'center', gap: spacing.md },
   controlBtn: { width: 44, height: 44, justifyContent: 'center', alignItems: 'center' },
+  controlBtnDisabled: { opacity: 0.3 },
   controlBtnFocused: { backgroundColor: 'rgba(255,255,255,0.2)', borderRadius: 22 },
 });

@@ -70,7 +70,6 @@ export interface Stream {
 }
 
 export type RootStackParamList = {
-  Gate: undefined;
   Login: undefined;
   StreamType: undefined;
   Categories: { type: StreamType };

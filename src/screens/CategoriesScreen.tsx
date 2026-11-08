@@ -1,4 +1,4 @@
-import React, { useEffect, useCallback, useRef } from 'react';
+import React, { useEffect, useCallback, useMemo, useRef, useState } from 'react';
 import {
   View,
   Text,
@@ -7,6 +7,7 @@ import {
   Pressable,
   ActivityIndicator,
   RefreshControl,
+  TextInput,
   Platform,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -37,7 +38,14 @@ export default function CategoriesScreen() {
   const typeCategories = categories[type];
   const { title } = TYPE_LABELS[type];
 
+  const [search, setSearch] = useState('');
   const firstItemRef = useRef<any>(null);
+
+  const filtered = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    if (!q) return typeCategories;
+    return typeCategories.filter((c) => c.name.toLowerCase().includes(q));
+  }, [typeCategories, search]);
 
   useEffect(() => {
     if (!Platform.isTV) return;
@@ -73,7 +81,7 @@ export default function CategoriesScreen() {
   const renderItem = useCallback(
     ({ item, index }: { item: Category; index: number }) => {
       if (index % 2 !== 0) return null;
-      const next = typeCategories[index + 1];
+      const next = filtered[index + 1];
       return (
         <View style={styles.row}>
           <CategoryCard ref={index === 0 ? firstItemRef : undefined} category={item} onPress={() => handleCategoryPress(item)} hasTVPreferredFocus={index === 0} />
@@ -85,7 +93,7 @@ export default function CategoriesScreen() {
         </View>
       );
     },
-    [typeCategories, handleCategoryPress],
+    [filtered, handleCategoryPress],
   );
 
   return (
@@ -102,9 +110,29 @@ export default function CategoriesScreen() {
         <View style={styles.headerInfo}>
           <Text style={styles.headerTitle}>{title}</Text>
           {typeCategories.length > 0 && (
-            <Text style={styles.headerSub}>{typeCategories.length} categories</Text>
+            <Text style={styles.headerSub}>{search.trim() ? `${filtered.length} of ${typeCategories.length}` : typeCategories.length} categories</Text>
           )}
         </View>
+      </View>
+
+      {/* Search */}
+      <View style={styles.searchContainer}>
+        <Ionicons name="search-outline" size={16} color={colors.textMuted} style={styles.searchIcon} />
+        <TextInput
+          style={styles.searchInput}
+          value={search}
+          onChangeText={setSearch}
+          placeholder="Search categories…"
+          placeholderTextColor={colors.textMuted}
+          clearButtonMode="while-editing"
+          autoCorrect={false}
+          autoCapitalize="none"
+        />
+        {search.length > 0 && (
+          <Pressable onPress={() => setSearch('')} hitSlop={10}>
+            <Ionicons name="close-circle" size={16} color={colors.textMuted} />
+          </Pressable>
+        )}
       </View>
 
       {/* Content */}
@@ -123,11 +151,19 @@ export default function CategoriesScreen() {
         </View>
       ) : (
         <FlatList
-          data={typeCategories}
+          data={filtered}
           renderItem={renderItem}
           keyExtractor={(item) => item.id}
           contentContainerStyle={styles.list}
           showsVerticalScrollIndicator={false}
+          keyboardShouldPersistTaps="handled"
+          ListEmptyComponent={
+            <View style={styles.empty}>
+              <Ionicons name="search-outline" size={48} color={colors.textMuted} />
+              <Text style={styles.emptyTitle}>No categories found</Text>
+              <Text style={styles.emptySubtitle}>Try a different search term</Text>
+            </View>
+          }
           refreshControl={
             <RefreshControl
               refreshing={loadingCategories}
@@ -160,6 +196,22 @@ const styles = StyleSheet.create({
   headerInfo: { flex: 1 },
   headerTitle: { ...typography.h2, color: colors.text },
   headerSub: { ...typography.caption, color: colors.textMuted, marginTop: 2 },
+  searchContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: colors.card,
+    borderRadius: radius.md,
+    marginHorizontal: spacing.md,
+    marginBottom: spacing.sm,
+    paddingHorizontal: spacing.md,
+    borderWidth: 1, borderColor: colors.cardBorder,
+    height: 44,
+  },
+  searchIcon: { marginRight: spacing.sm },
+  searchInput: { flex: 1, ...typography.body, color: colors.text },
+  empty: { marginTop: spacing.xxl, alignItems: 'center', gap: spacing.sm },
+  emptyTitle: { ...typography.h3, color: colors.textSecondary },
+  emptySubtitle: { ...typography.body, color: colors.textMuted, textAlign: 'center' },
   list: { paddingHorizontal: spacing.md, paddingBottom: spacing.xl },
   row: { flexDirection: 'row' },
   center: { flex: 1, justifyContent: 'center', alignItems: 'center', gap: spacing.md, paddingHorizontal: spacing.xl },

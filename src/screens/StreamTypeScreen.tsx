@@ -3,10 +3,11 @@ import {
   View,
   Text,
   Pressable,
-  TouchableHighlight,
   StyleSheet,
   Animated,
   Platform,
+  Modal,
+  ActivityIndicator,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -16,9 +17,11 @@ import { useNavigation } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 
 import { useAuthStore } from '../store/authStore';
-import { useStreamStore } from '../store/streamStore';
 import { RootStackParamList, StreamType } from '../types';
 import { colors, spacing, radius, typography } from '../theme';
+import { pingServer, PingResult } from '../api/auth';
+import { useStreamStore } from '../store/streamStore';
+import { SERVERS } from '../config';
 import { getMacAddress } from '../utils/mac';
 
 type Nav = NativeStackNavigationProp<RootStackParamList, 'StreamType'>;
@@ -53,8 +56,45 @@ const CARDS: TypeCard[] = [
 
 export default function StreamTypeScreen() {
   const navigation = useNavigation<Nav>();
-  const { username, url, logout } = useAuthStore();
+  const { username, password, url, setServer } = useAuthStore();
   const { clearAll } = useStreamStore();
+  const [pickerOpen, setPickerOpen] = useState(false);
+
+  const [pinging, setPinging] = useState(false);
+  const [pings, setPings] = useState<Record<string, PingResult>>({});
+
+  const applyServer = (next: string) => {
+    if (next === url) return;
+    clearAll(); // cached categories/streams belong to the previous server
+    setServer(next);
+  };
+
+  const handlePickServer = (next: string) => {
+    setPickerOpen(false);
+    applyServer(next);
+  };
+
+  /** Ping every server in parallel and switch to the fastest one that accepts the login. */
+  const handleFindBest = async () => {
+    setPinging(true);
+    setPings({});
+    const results = await Promise.all(
+      SERVERS.map(async (server) => {
+        const result = await pingServer(server, username, password);
+        setPings((prev) => ({ ...prev, [server]: result }));
+        return { server, result };
+      }),
+    );
+    const best = results
+      .filter((r) => r.result.ok)
+      .sort((a, b) => a.result.ms - b.result.ms)[0];
+    setPinging(false);
+    if (best) applyServer(best.server);
+  };
+
+  const bestServer = Object.entries(pings)
+    .filter(([, r]) => r.ok)
+    .sort(([, a], [, b]) => a.ms - b.ms)[0]?.[0];
 
   const [mac, setMac] = useState('');
 
@@ -78,11 +118,6 @@ export default function StreamTypeScreen() {
     navigation.navigate('Categories', { type });
   };
 
-  const handleLogout = () => {
-    clearAll();
-    logout();
-  };
-
   // Strip protocol for display
   const serverDisplay = url.replace(/^https?:\/\//, '');
 
@@ -102,16 +137,52 @@ export default function StreamTypeScreen() {
             {mac ? <Text style={styles.mac}>{mac}</Text> : null}
           </View>
         </View>
-        <TouchableHighlight onPress={handleLogout} style={styles.logoutBtn} underlayColor="rgba(255,255,255,0.1)">
-          <Ionicons name="log-out-outline" size={20} color={colors.textSecondary} />
-        </TouchableHighlight>
       </View>
 
       {/* Server badge */}
-      <View style={styles.serverBadge}>
+      <Pressable onPress={() => setPickerOpen(true)} style={styles.serverBadge}>
         <Ionicons name="server-outline" size={12} color={colors.textMuted} />
         <Text style={styles.serverText} numberOfLines={1}>{serverDisplay}</Text>
-      </View>
+        <Ionicons name="chevron-down" size={12} color={colors.textMuted} />
+      </Pressable>
+
+      <Modal visible={pickerOpen} transparent animationType="fade" onRequestClose={() => setPickerOpen(false)}>
+        <Pressable style={styles.modalBackdrop} onPress={() => setPickerOpen(false)}>
+          <View style={styles.modalCard}>
+            <Text style={styles.modalTitle}>Choose server</Text>
+            <Pressable
+              onPress={handleFindBest}
+              disabled={pinging}
+              style={({ focused }: any) => [styles.findBestBtn, pinging && { opacity: 0.6 }, focused && styles.serverRowFocused]}
+            >
+              {pinging ? (
+                <ActivityIndicator size="small" color={colors.white} />
+              ) : (
+                <Ionicons name="speedometer-outline" size={16} color={colors.white} />
+              )}
+              <Text style={styles.findBestText}>{pinging ? 'Testing servers…' : 'Find best'}</Text>
+            </Pressable>
+            {SERVERS.map((server) => (
+              <Pressable
+                key={server}
+                onPress={() => handlePickServer(server)}
+                hasTVPreferredFocus={server === url}
+                style={({ focused }: any) => [styles.serverRow, focused && styles.serverRowFocused]}
+              >
+                <Text style={[styles.serverRowText, server === url && styles.serverRowActive]} numberOfLines={1}>
+                  {server.replace(/^https?:\/\//, '')}
+                </Text>
+                {pings[server] && (
+                  <Text style={[styles.pingText, pings[server].ok ? (server === bestServer && !pinging ? styles.pingBest : null) : styles.pingFail]}>
+                    {pings[server].ok ? `${pings[server].ms} ms` : pings[server].error}
+                  </Text>
+                )}
+                {server === url && <Ionicons name="checkmark" size={18} color={colors.primary} style={{ marginLeft: spacing.sm }} />}
+              </Pressable>
+            ))}
+          </View>
+        </Pressable>
+      </Modal>
 
       {/* Title */}
       <Animated.View style={{ opacity: fadeAnim, transform: [{ translateY: slideAnim }] }}>
@@ -229,6 +300,33 @@ const styles = StyleSheet.create({
     color: colors.textMuted,
     maxWidth: 250,
   },
+  modalBackdrop: {
+    flex: 1, backgroundColor: 'rgba(0,0,0,0.6)',
+    justifyContent: 'center', alignItems: 'center', padding: spacing.lg,
+  },
+  modalCard: {
+    width: '100%', maxWidth: 420,
+    backgroundColor: colors.surface, borderRadius: radius.md,
+    borderWidth: 1, borderColor: colors.cardBorder,
+    padding: spacing.md, gap: spacing.xs,
+  },
+  modalTitle: { ...typography.h3, color: colors.text, marginBottom: spacing.xs },
+  serverRow: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+    paddingVertical: spacing.sm, paddingHorizontal: spacing.sm, borderRadius: radius.sm,
+  },
+  findBestBtn: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: spacing.xs,
+    backgroundColor: colors.primary, borderRadius: radius.sm,
+    paddingVertical: spacing.sm, marginBottom: spacing.xs,
+  },
+  findBestText: { ...typography.body, color: colors.white, fontWeight: '600' },
+  pingText: { ...typography.caption, color: colors.textMuted },
+  pingBest: { color: colors.success ?? '#22C55E', fontWeight: '700' },
+  pingFail: { color: colors.error },
+  serverRowFocused: { backgroundColor: 'rgba(255,255,255,0.12)' },
+  serverRowText: { ...typography.body, color: colors.textSecondary, flex: 1 },
+  serverRowActive: { color: colors.text, fontWeight: '600' },
   title: {
     ...typography.h1,
     color: colors.text,

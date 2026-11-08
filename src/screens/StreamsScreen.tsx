@@ -113,7 +113,14 @@ export default function StreamsScreen() {
           placeholder={`Search ${type === 'vod' ? 'movies & series' : 'streams'}…`}
           placeholderTextColor={colors.textMuted}
           clearButtonMode="while-editing"
+          autoCorrect={false}
+          autoCapitalize="none"
         />
+        {search.length > 0 && (
+          <Pressable onPress={() => setSearch('')} hitSlop={10}>
+            <Ionicons name="close-circle" size={16} color={colors.textMuted} />
+          </Pressable>
+        )}
       </View>
 
       {/* Content */}
@@ -140,6 +147,7 @@ export default function StreamsScreen() {
           keyExtractor={(item) => item.id}
           contentContainerStyle={styles.list}
           showsVerticalScrollIndicator={false}
+          keyboardShouldPersistTaps="handled"
           ListEmptyComponent={renderEmpty}
           refreshControl={
             <RefreshControl

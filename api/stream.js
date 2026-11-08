@@ -24,7 +24,9 @@ export default async function handler(req, res) {
   try {
     response = await fetch(decoded, { headers: upstreamHeaders });
   } catch (err) {
-    res.status(502).end(String(err));
+    const cause = err && err.cause ? ` (${err.cause.code || err.cause.message || err.cause})` : '';
+    console.error('[stream proxy] upstream fetch failed:', decoded, err, err && err.cause);
+    res.status(502).end(`${String(err)}${cause}`);
     return;
   }
 
@@ -51,7 +53,7 @@ export default async function handler(req, res) {
         const trimmed = line.trim();
         if (!trimmed || trimmed.startsWith('#')) return line;
         try {
-          const absUrl = new URL(trimmed, decoded).toString();
+          const absUrl = new URL(trimmed, response.url || decoded).toString();
           return `/api/stream?url=${encodeURIComponent(absUrl)}`;
         } catch {
           return line;

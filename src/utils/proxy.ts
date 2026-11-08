@@ -1,12 +1,9 @@
 import { Platform } from 'react-native';
 
-// Only proxy when the page is served over HTTPS — that's the only case where the
-// browser's mixed-content block kicks in. On HTTP localhost (Expo dev server) the
-// browser allows direct HTTP calls and the proxy endpoint doesn't exist anyway.
-const isHttpsWeb =
-  Platform.OS === 'web' &&
-  typeof window !== 'undefined' &&
-  window.location?.protocol === 'https:';
+// Always proxy on web: the upstream sends no CORS headers (and redirects live
+// streams to a bare IP), and on HTTPS pages mixed content is blocked as well.
+// In production /api/* is served by Vercel, in dev by metro.config.js.
+const isHttpsWeb = Platform.OS === 'web' && typeof window !== 'undefined';
 
 export function shouldUseProxy(): boolean {
   return isHttpsWeb;

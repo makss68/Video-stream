@@ -6,7 +6,10 @@ import React, { useEffect, useRef } from 'react';
 import { VideoView, useVideoPlayer } from 'expo-video';
 import { StyleSheet, ViewStyle, StyleProp } from 'react-native';
 
-export type PlayerStatus = 'idle' | 'loading' | 'readyToPlay' | 'error';
+export type PlayerStatus = 'idle' | 'loading' | 'buffering' | 'readyToPlay' | 'error';
+
+/** Stuck in 'loading' (initial connect or rebuffer) this long → report an error so the screen reloads. */
+const LOADING_TIMEOUT_MS = 20_000;
 
 interface Props {
   url: string;
@@ -29,10 +32,21 @@ export default function VideoPlayer({
 
   // Status changes
   useEffect(() => {
+    let loadingTimer: ReturnType<typeof setTimeout> | null = null;
+    let wasReady = false;
+    const clear = () => { if (loadingTimer) { clearTimeout(loadingTimer); loadingTimer = null; } };
     const sub = player.addListener('statusChange', ({ status, error }) => {
+      clear();
+      if (status === 'readyToPlay') wasReady = true;
+      if (status === 'loading') {
+        // After the first frame, 'loading' means rebuffering.
+        onStatusChange?.(wasReady ? 'buffering' : 'loading');
+        loadingTimer = setTimeout(() => onStatusChange?.('error', 'Stream stalled'), LOADING_TIMEOUT_MS);
+        return;
+      }
       onStatusChange?.(status as PlayerStatus, error?.message);
     });
-    return () => sub.remove();
+    return () => { clear(); sub.remove(); };
   }, [player, onStatusChange]);
 
   // Play / pause

@@ -3,12 +3,22 @@
  * Set USE_MOCK=false and API_BASE_URL to your real server in production.
  */
 
-/**
- * AES-encrypted credentials (key = gate password entered at runtime).
- * Never store plaintext credentials here.
- */
-export const ENCRYPTED_CREDENTIALS =
-  'U2FsdGVkX1/uSsMHMtyNBJIWL807DyTsUOpUD74n8Z0KcJAQ2elzIiYaosM+/VsuwQ0no2VsQTkovUW7u3yZ2RRVH4GtDFJwRNjaer/l7Ui/LmmzX9nhKDp4E2s1j+U2wiaSCPyMZZCLL9YrY07lEg==';
+/** Server credentials used for automatic sign-in (no gate screen). */
+export const SERVERS = [
+  'http://line.dino.ws:80',
+  'http://line.dino-ott.ru:80',
+  'http://line.dino-ott.ru:8000',
+  'http://line.din-ott.com',
+  'http://line.powerdino.com:80',
+  'http://line.nerdiptv.com',
+  'http://line.rs4ott.com',
+];
+
+export const CREDENTIALS = {
+  url: SERVERS[0],
+  username: '0d55fb13a8',
+  password: '8f48da343d42',
+};
 
 export const config = {
   /** Base URL for your camera management API */

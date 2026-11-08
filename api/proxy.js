@@ -15,6 +15,7 @@ export default async function handler(req, res) {
     res.setHeader('Content-Type', 'application/json');
     res.status(response.status).send(text);
   } catch (err) {
-    res.status(502).json({ error: String(err) });
+    const cause = err && err.cause ? ` (${err.cause.code || err.cause.message || err.cause})` : '';
+    res.status(502).json({ error: `${String(err)}${cause}` });
   }
 }

@@ -51,3 +51,49 @@ export async function validateCredentials(
     throw new Error('Invalid credentials or unsupported server');
   }
 }
+
+export interface PingResult {
+  ok: boolean;
+  /** Round-trip time of an authenticated player_api call, in ms. */
+  ms: number;
+  error?: string;
+}
+
+/**
+ * Measures how fast a server answers an authenticated (action-less) player_api
+ * call. A server only counts as ok if it accepts the credentials.
+ */
+export async function pingServer(
+  url: string,
+  username: string,
+  password: string,
+  timeout = 6_000,
+): Promise<PingResult> {
+  const cleanUrl = url.trim().replace(/\/+$/, '');
+  const useProxy = shouldUseProxy();
+  const endpoint = useProxy ? '/api/proxy' : `${cleanUrl}/player_api.php`;
+  const params = useProxy
+    ? { serverUrl: cleanUrl, username, password }
+    : { username, password };
+
+  const start = Date.now();
+  try {
+    const res = await axios.get(endpoint, { params, timeout });
+    const ms = Date.now() - start;
+    const auth = res.data?.user_info?.auth;
+    if (auth === 1 || auth === '1') return { ok: true, ms };
+    const msg = typeof res.data === 'string' ? res.data.slice(0, 40) : undefined;
+    return { ok: false, ms, error: msg || 'Rejected' };
+  } catch (err) {
+    const ms = Date.now() - start;
+    if (axios.isAxiosError(err)) {
+      if (err.code === 'ECONNABORTED') return { ok: false, ms, error: 'Timeout' };
+      if (err.response?.status) {
+        const detail = (err.response.data as any)?.error;
+        const cause = typeof detail === 'string' ? detail.match(/\(([^)]+)\)\s*$/)?.[1] : undefined;
+        return { ok: false, ms, error: cause ?? `HTTP ${err.response.status}` };
+      }
+    }
+    return { ok: false, ms, error: 'Unreachable' };
+  }
+}
