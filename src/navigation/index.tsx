@@ -7,6 +7,7 @@ import { useAuthStore } from '../store/authStore';
 import { RootStackParamList } from '../types';
 import { colors } from '../theme';
 
+import LoginScreen from '../screens/LoginScreen';
 import StreamTypeScreen from '../screens/StreamTypeScreen';
 import CategoriesScreen from '../screens/CategoriesScreen';
 import StreamsScreen from '../screens/StreamsScreen';
@@ -40,7 +41,9 @@ export default function Navigation() {
       }}
     >
       <Stack.Navigator screenOptions={{ headerShown: false, animation: 'fade' }}>
-        {isAuthenticated && (
+        {!isAuthenticated ? (
+          <Stack.Screen name="Login" component={LoginScreen} />
+        ) : (
           <>
             <Stack.Screen name="StreamType" component={StreamTypeScreen} />
             <Stack.Screen

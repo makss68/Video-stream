@@ -38,6 +38,9 @@ export async function validateCredentials(
       if (status === 401 || status === 403) {
         throw new Error('Invalid credentials (wrong username or password)');
       }
+      if (status === 451) {
+        throw new Error('The provider refused this line (HTTP 451).\nThe subscription may be expired, or this network or country may be blocked.');
+      }
       if (status) {
         throw new Error(`Server returned HTTP ${status}\n${endpoint}`);
       }

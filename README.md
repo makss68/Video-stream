@@ -10,6 +10,21 @@ npm run typecheck
 npm run build:web         # Generates dist/ for deployment
 ```
 
+## Servers and accounts
+
+Servers and logins live in `src/config.local.ts`. That file is git-ignored, so it is
+never committed, but it is bundled into every build made on this machine (APK, web).
+`npm ci` / `npm install` creates it from `src/config.local.example.ts` when it is
+missing; fill in the copy. A build without configured accounts opens on the login screen.
+
+## Logo
+
+`node scripts/render-brand.cjs` regenerates the icon, adaptive icon, TV banner, favicon
+and in-app logo in `assets/` (needs Google Chrome). Run `npm run prebuild:android`
+afterwards so the Android launcher icons and TV banner are updated.
+
+## Android
+
 Android builds require the Android SDK and Java:
 
 ```sh

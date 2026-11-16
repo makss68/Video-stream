@@ -9,6 +9,9 @@ ios/
 dist/
 .expo/
 
+# Private app config: servers and logins (template: src/config.local.example.ts)
+src/config.local.ts
+
 # Signing — never commit these
 *.jks
 *.keystore

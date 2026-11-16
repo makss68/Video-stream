@@ -11,17 +11,20 @@ import {
   Animated,
   ActivityIndicator,
   ScrollView,
+  Image,
   findNodeHandle,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
-import { MaterialCommunityIcons, Ionicons } from '@expo/vector-icons';
+import { Ionicons } from '@expo/vector-icons';
 import { StatusBar } from 'expo-status-bar';
 
 import { validateCredentials } from '../api/auth';
 import { useAuthStore } from '../store/authStore';
+import { CREDENTIAL_SETS, isConfigured } from '../config';
 import { colors, spacing, radius, typography } from '../theme';
 
 const isTV = Platform.isTV;
+const logo = require('../../assets/logo-mark.png');
 
 // ─────────────────────────────────────────────────────────────────────────────
 // On Android TV / Fire TV, bare TextInput is NOT navigable via D-pad.
@@ -31,10 +34,11 @@ const isTV = Platform.isTV;
 // ─────────────────────────────────────────────────────────────────────────────
 
 export default function LoginScreen() {
-  const { setAuth, lastUrl } = useAuthStore();
+  const { setAuth, setAccount, lastUrl, lastUsername } = useAuthStore();
+  const savedAccounts = CREDENTIAL_SETS.filter(isConfigured);
 
   const [serverUrl, setServerUrl] = useState(lastUrl || '');
-  const [username, setUsername] = useState('');
+  const [username, setUsername] = useState(lastUsername || '');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -68,6 +72,7 @@ export default function LoginScreen() {
   const usernameWrapperRef = useRef<any>(null);
   const passwordWrapperRef = useRef<any>(null);
   const loginWrapperRef = useRef<any>(null);
+  const savedRefs = useRef<any[]>([]);
 
   useEffect(() => {
     if (!isTV) {
@@ -84,11 +89,16 @@ export default function LoginScreen() {
       const usernameId = findNodeHandle(usernameWrapperRef.current);
       const passwordId = findNodeHandle(passwordWrapperRef.current);
       const loginId = findNodeHandle(loginWrapperRef.current);
+      const firstSavedId = savedRefs.current[0] ? findNodeHandle(savedRefs.current[0]) : null;
 
       urlWrapperRef.current?.setNativeProps({ nextFocusDown: usernameId });
       usernameWrapperRef.current?.setNativeProps({ nextFocusUp: urlId, nextFocusDown: passwordId });
       passwordWrapperRef.current?.setNativeProps({ nextFocusUp: usernameId, nextFocusDown: loginId });
-      loginWrapperRef.current?.setNativeProps({ nextFocusUp: passwordId });
+      loginWrapperRef.current?.setNativeProps({
+        nextFocusUp: passwordId,
+        ...(firstSavedId ? { nextFocusDown: firstSavedId } : null),
+      });
+      if (firstSavedId) savedRefs.current[0]?.setNativeProps({ nextFocusUp: loginId });
     });
   }, []);
 
@@ -116,10 +126,43 @@ export default function LoginScreen() {
     }
   };
 
+  const handleSavedAccount = async (id: string) => {
+    setError('');
+    await setAccount(id);
+  };
+
+  // Accounts from config.ts: one press signs in, no typing (handy on a TV remote).
+  const savedAccountsSection = savedAccounts.length > 0 ? (
+    <View style={styles.savedSection}>
+      <View style={styles.dividerRow}>
+        <View style={styles.dividerLine} />
+        <Text style={styles.dividerText}>or use a saved account</Text>
+        <View style={styles.dividerLine} />
+      </View>
+      {savedAccounts.map((acc, i) => (
+        <Pressable
+          key={acc.id}
+          ref={(r) => { savedRefs.current[i] = r; }}
+          onPress={() => handleSavedAccount(acc.id)}
+          disabled={loading}
+          style={({ focused }: any) => [styles.savedRow, focused && styles.savedRowFocused]}
+        >
+          <Ionicons name="person-circle-outline" size={22} color={colors.textSecondary} />
+          <View style={{ flex: 1 }}>
+            <Text style={styles.savedLabel} numberOfLines={1}>{acc.label}</Text>
+            <Text style={styles.savedSub} numberOfLines={1}>{acc.username}</Text>
+          </View>
+          <Ionicons name="arrow-forward" size={16} color={colors.textMuted} />
+        </Pressable>
+      ))}
+    </View>
+  ) : null;
+
   // ── TV form ───────────────────────────────────────────────────────────────
   const tvForm = (
-    <View style={styles.tvContainer}>
+    <ScrollView contentContainerStyle={styles.tvContainer} showsVerticalScrollIndicator={false}>
       <Animated.View style={[styles.card, { opacity: fadeAnim }]}>
+        <Image source={logo} style={styles.tvLogo} />
         <Text style={styles.appName}>StreamViewer</Text>
         <Text style={styles.appSubtitle}>Secure Stream Access</Text>
 
@@ -248,17 +291,17 @@ export default function LoginScreen() {
             }
           </LinearGradient>
         </TouchableHighlight>
+
+        {savedAccountsSection}
       </Animated.View>
-    </View>
+    </ScrollView>
   );
 
   // ── Phone / Web form ──────────────────────────────────────────────────────
   const phoneForm = (
     <Animated.View style={[styles.card, { opacity: fadeAnim, transform: [{ translateY: slideAnim }] }]}>
       <View style={styles.logoContainer}>
-        <View style={styles.logoIcon}>
-          <MaterialCommunityIcons name="cctv" size={36} color={colors.primary} />
-        </View>
+        <Image source={logo} style={styles.logo} />
         <Text style={styles.appName}>StreamViewer</Text>
         <Text style={styles.appSubtitle}>Secure Stream Access</Text>
       </View>
@@ -362,6 +405,8 @@ export default function LoginScreen() {
           }
         </LinearGradient>
       </Pressable>
+
+      {savedAccountsSection}
     </Animated.View>
   );
 
@@ -390,7 +435,7 @@ const styles = StyleSheet.create({
   bgLine: { width: '8.33%', borderRightWidth: 1, borderColor: colors.primary, height: '100%' },
   kav: { flex: 1 },
   scroll: { flexGrow: 1, justifyContent: 'center', paddingHorizontal: spacing.lg, paddingVertical: spacing.xxl },
-  tvContainer: { flex: 1, justifyContent: 'center', paddingHorizontal: '20%' },
+  tvContainer: { flexGrow: 1, justifyContent: 'center', paddingHorizontal: '20%', paddingVertical: spacing.lg },
   card: {
     backgroundColor: colors.surface,
     borderRadius: radius.xl,
@@ -399,12 +444,8 @@ const styles = StyleSheet.create({
     borderColor: colors.cardBorder,
   },
   logoContainer: { alignItems: 'center', marginBottom: spacing.xl },
-  logoIcon: {
-    width: 72, height: 72, borderRadius: radius.lg,
-    backgroundColor: 'rgba(59,130,246,0.12)',
-    borderWidth: 1, borderColor: 'rgba(59,130,246,0.3)',
-    justifyContent: 'center', alignItems: 'center', marginBottom: spacing.md,
-  },
+  logo: { width: 88, height: 88, marginBottom: spacing.md },
+  tvLogo: { width: 64, height: 64, alignSelf: 'center', marginBottom: spacing.sm },
   appName: { ...typography.h1, color: colors.text, letterSpacing: -1, textAlign: 'center' },
   appSubtitle: { ...typography.caption, color: colors.textMuted, marginTop: 4, letterSpacing: 1, textTransform: 'uppercase', textAlign: 'center', marginBottom: spacing.xl },
   errorBox: {
@@ -441,4 +482,17 @@ const styles = StyleSheet.create({
   },
   loginGradient: { height: 52, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: spacing.sm },
   loginText: { ...typography.body, color: colors.white, fontWeight: '700' },
+  savedSection: { marginTop: spacing.lg, gap: spacing.xs },
+  dividerRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm, marginBottom: spacing.xs },
+  dividerLine: { flex: 1, height: 1, backgroundColor: colors.cardBorder },
+  dividerText: { ...typography.caption, color: colors.textMuted },
+  savedRow: {
+    flexDirection: 'row', alignItems: 'center', gap: spacing.sm,
+    paddingVertical: spacing.sm, paddingHorizontal: spacing.md,
+    borderRadius: radius.md, borderWidth: 1, borderColor: colors.cardBorder,
+    backgroundColor: colors.card,
+  },
+  savedRowFocused: { borderColor: '#FFFFFF', borderWidth: 3, backgroundColor: 'rgba(59,130,246,0.15)' },
+  savedLabel: { ...typography.body, color: colors.text, fontWeight: '600' },
+  savedSub: { ...typography.caption, color: colors.textMuted },
 });

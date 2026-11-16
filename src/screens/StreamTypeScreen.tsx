@@ -8,6 +8,7 @@ import {
   Platform,
   Modal,
   ActivityIndicator,
+  Image,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -16,7 +17,7 @@ import { StatusBar } from 'expo-status-bar';
 import { useNavigation } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 
-import { useAuthStore } from '../store/authStore';
+import { useAuthStore, MANUAL_ACCOUNT_ID } from '../store/authStore';
 import { RootStackParamList, StreamType } from '../types';
 import { colors, spacing, radius, typography } from '../theme';
 import { pingServer, PingResult, fetchAccountInfo, AccountInfo } from '../api/auth';
@@ -57,7 +58,7 @@ const CARDS: TypeCard[] = [
 
 export default function StreamTypeScreen() {
   const navigation = useNavigation<Nav>();
-  const { username, password, url, servers, accountId, setServer, setAccount } = useAuthStore();
+  const { username, password, url, servers, accountId, manual, setServer, setAccount, logout } = useAuthStore();
   const { clearAll } = useStreamStore();
   const [pickerOpen, setPickerOpen] = useState(false);
   const [accountPickerOpen, setAccountPickerOpen] = useState(false);
@@ -93,6 +94,12 @@ export default function StreamTypeScreen() {
     clearAll(); // stream URLs embed the credentials of the previous account
     setPings({}); // ping results were measured with the previous credentials
     setAccount(id);
+  };
+
+  const handleLogout = () => {
+    setAccountPickerOpen(false);
+    clearAll(); // cached categories/streams belong to the account being signed out
+    logout(); // the navigator switches to the login screen
   };
 
   /** Ping every server in parallel and switch to the fastest one that accepts the login. */
@@ -163,9 +170,7 @@ export default function StreamTypeScreen() {
       {/* Header */}
       <View style={styles.header}>
         <View style={styles.headerLeft}>
-          <View style={styles.logoIcon}>
-            <MaterialCommunityIcons name="human" size={20} color={colors.primary} />
-          </View>
+          <Image source={require('../../assets/logo-mark.png')} style={styles.logo} />
           <View>
             <Text style={styles.greeting}>Signed in as</Text>
             <Text style={styles.username}>{username}</Text>
@@ -173,6 +178,13 @@ export default function StreamTypeScreen() {
             {mac ? <Text style={styles.mac}>{mac}</Text> : null}
           </View>
         </View>
+        <Pressable
+          onPress={handleLogout}
+          accessibilityLabel="Sign out"
+          style={({ focused }: any) => [styles.logoutBtn, focused && styles.badgeFocused]}
+        >
+          <Ionicons name="log-out-outline" size={18} color={colors.textSecondary} />
+        </Pressable>
       </View>
 
       {/* Account + server badges */}
@@ -217,13 +229,37 @@ export default function StreamTypeScreen() {
                       {set.label}
                     </Text>
                     <Text style={styles.pingText} numberOfLines={1}>
-                      {ready ? set.username : 'Not configured · add it in src/config.ts'}
+                      {ready ? set.username : 'Not configured · add it in src/config.local.ts'}
                     </Text>
                   </View>
                   {active && <Ionicons name="checkmark" size={18} color={colors.primary} style={{ marginLeft: spacing.sm }} />}
                 </Pressable>
               );
             })}
+            {manual && (
+              <Pressable
+                onPress={() => handlePickAccount(MANUAL_ACCOUNT_ID)}
+                hasTVPreferredFocus={accountId === MANUAL_ACCOUNT_ID}
+                style={({ focused }: any) => [styles.serverRow, focused && styles.serverRowFocused]}
+              >
+                <View style={{ flex: 1 }}>
+                  <Text style={[styles.serverRowText, accountId === MANUAL_ACCOUNT_ID && styles.serverRowActive]} numberOfLines={1}>
+                    {manual.username}
+                  </Text>
+                  <Text style={styles.pingText} numberOfLines={1}>
+                    Entered manually · {manual.url.replace(/^https?:\/\//, '')}
+                  </Text>
+                </View>
+                {accountId === MANUAL_ACCOUNT_ID && <Ionicons name="checkmark" size={18} color={colors.primary} style={{ marginLeft: spacing.sm }} />}
+              </Pressable>
+            )}
+            <Pressable
+              onPress={handleLogout}
+              style={({ focused }: any) => [styles.serverRow, styles.signInOtherRow, focused && styles.serverRowFocused]}
+            >
+              <Ionicons name="log-in-outline" size={18} color={colors.textSecondary} style={{ marginRight: spacing.sm }} />
+              <Text style={styles.serverRowText} numberOfLines={1}>Sign in with another account…</Text>
+            </Pressable>
           </View>
         </View>
       </Modal>
@@ -364,15 +400,9 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: spacing.sm,
   },
-  logoIcon: {
-    width: 36,
-    height: 36,
-    borderRadius: radius.sm,
-    backgroundColor: 'rgba(59,130,246,0.12)',
-    borderWidth: 1,
-    borderColor: 'rgba(59,130,246,0.25)',
-    justifyContent: 'center',
-    alignItems: 'center',
+  logo: {
+    width: 40,
+    height: 40,
   },
   greeting: {
     ...typography.caption,
@@ -457,6 +487,11 @@ const styles = StyleSheet.create({
   serverRowFocused: { backgroundColor: 'rgba(255,255,255,0.12)' },
   findBestFocused: { borderWidth: 2, borderColor: colors.white },
   rowDisabled: { opacity: 0.45 },
+  signInOtherRow: {
+    justifyContent: 'flex-start',
+    borderTopWidth: 1, borderTopColor: colors.cardBorder,
+    marginTop: spacing.xs, paddingTop: spacing.md,
+  },
   serverRowText: { ...typography.body, color: colors.textSecondary, flex: 1 },
   serverRowActive: { color: colors.text, fontWeight: '600' },
   title: {
