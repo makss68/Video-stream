@@ -26,6 +26,7 @@ import { useKeepAwake } from 'expo-keep-awake';
 import VideoPlayer, { PlayerStatus } from '../components/VideoPlayer';
 import { RootStackParamList } from '../types';
 import { colors, spacing, radius, typography } from '../theme';
+import { useStreamStore } from '../store/streamStore';
 
 type Route = RouteProp<RootStackParamList, 'Player'>;
 
@@ -48,6 +49,8 @@ export default function PlayerScreen() {
   const navigation = useNavigation();
   const route = useRoute<Route>();
   const { stream, streams = [], streamIndex = 0 } = route.params;
+
+  useEffect(() => { useStreamStore.getState().setLastPlayed(stream.id); }, [stream.id]);
 
   const [status, setStatus] = useState<PlayerStatus>('loading');
   const [errorMsg, setErrorMsg] = useState('');
@@ -181,12 +184,31 @@ export default function PlayerScreen() {
     showControls();
   }, [currentTime, duration, showControls]);
 
-  // Arrow down/up → next/prev stream (only when controls are hidden)
+  const isVod = !stream.isLive;
+
+  /** Play/pause button. With the controls hidden, OK only brings them back (no surprise pause). */
+  const handlePlayPausePress = useCallback(() => {
+    if (Platform.isTV && !controlsVisibleRef.current) { showControls(); return; }
+    setIsPlaying((v) => !v);
+    showControls();
+  }, [setIsPlaying, showControls]);
+
+  // Remote control. Key-up only (eventKeyAction 1) so a press acts once.
   useTVEventHandlerSafe((evt) => {
-    if (!Platform.isTV) return;
-    if (evt.eventKeyAction !== 1 || controlsVisibleRef.current) return;
-    if (evt.eventType === 'down') goToIndex(streamIndex + 1);
-    else if (evt.eventType === 'up') goToIndex(streamIndex - 1);
+    if (!Platform.isTV || evt.eventKeyAction !== 1) return;
+    switch (evt.eventType) {
+      // Media keys work whether or not the controls are shown
+      case 'playPause': setIsPlaying((v) => !v); showControls(); return;
+      case 'play': setIsPlaying(true); showControls(); return;
+      case 'pause': setIsPlaying(false); showControls(); return;
+      case 'fastForward': if (isVod) skipBy(SKIP_SECONDS); return;
+      case 'rewind': if (isVod) skipBy(-SKIP_SECONDS); return;
+      case 'channelUp': case 'next': goToIndex(streamIndex + 1); return;
+      case 'channelDown': case 'previous': goToIndex(streamIndex - 1); return;
+      // Arrow down/up → next/prev stream, only when the controls are hidden
+      case 'down': if (!controlsVisibleRef.current) goToIndex(streamIndex + 1); return;
+      case 'up': if (!controlsVisibleRef.current) goToIndex(streamIndex - 1); return;
+    }
   });
 
   // Web keyboard shortcuts: space/k play-pause, m mute, f fullscreen,
@@ -232,7 +254,6 @@ export default function PlayerScreen() {
     opacity: controlsOpacity.value,
   }));
 
-  const isVod = !stream.isLive;
   const progress = duration > 0 ? Math.min(currentTime / duration, 1) : 0;
 
   return (
@@ -240,7 +261,7 @@ export default function PlayerScreen() {
       <StatusBar hidden />
 
       {/* Video */}
-      <Pressable onPress={toggleControls} style={StyleSheet.absoluteFill}>
+      <Pressable onPress={toggleControls} style={StyleSheet.absoluteFill} focusable={!Platform.isTV}>
         <VideoPlayer
           key={retryKey}
           url={stream.url}
@@ -310,7 +331,12 @@ export default function PlayerScreen() {
         {/* Top bar */}
         <View style={styles.topBar} pointerEvents="box-none">
           <View style={styles.scrim} pointerEvents="none" />
-          <Pressable onPress={() => navigation.goBack()} style={styles.backBtn} hitSlop={16}>
+          <Pressable
+            onPress={() => navigation.goBack()}
+            onFocus={showControls}
+            style={({ focused }: any) => [styles.backBtn, focused && styles.controlBtnFocused]}
+            hitSlop={16}
+          >
             <Ionicons name="chevron-down" size={24} color={colors.white} />
           </Pressable>
           <View style={styles.streamInfo}>
@@ -337,6 +363,8 @@ export default function PlayerScreen() {
               <Text style={styles.timeText}>{formatTime(currentTime)}</Text>
               <Pressable
                 style={styles.progressTrack}
+                // Tap-to-seek needs a touch position; on TV, OK here would jump to 0:00.
+                focusable={!Platform.isTV}
                 onPress={handleSeekPress}
                 onLayout={(e) => { progressBarWidth.current = e.nativeEvent.layout.width; }}
               >
@@ -369,7 +397,7 @@ export default function PlayerScreen() {
               </Pressable>
             )}
             <Pressable
-              onPress={() => { setIsPlaying((v) => !v); showControls(); }}
+              onPress={handlePlayPausePress}
               onFocus={showControls}
               style={({ focused }: any) => [styles.controlBtn, focused && styles.controlBtnFocused]}
               hasTVPreferredFocus

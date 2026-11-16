@@ -19,10 +19,11 @@ import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { useAuthStore } from '../store/authStore';
 import { RootStackParamList, StreamType } from '../types';
 import { colors, spacing, radius, typography } from '../theme';
-import { pingServer, PingResult } from '../api/auth';
+import { pingServer, PingResult, fetchAccountInfo, AccountInfo } from '../api/auth';
 import { useStreamStore } from '../store/streamStore';
-import { SERVERS } from '../config';
+import { CREDENTIAL_SETS, isConfigured } from '../config';
 import { getMacAddress } from '../utils/mac';
+import { restoreTVFocus } from '../utils/tvFocus';
 
 type Nav = NativeStackNavigationProp<RootStackParamList, 'StreamType'>;
 
@@ -56,12 +57,24 @@ const CARDS: TypeCard[] = [
 
 export default function StreamTypeScreen() {
   const navigation = useNavigation<Nav>();
-  const { username, password, url, setServer } = useAuthStore();
+  const { username, password, url, servers, accountId, setServer, setAccount } = useAuthStore();
   const { clearAll } = useStreamStore();
   const [pickerOpen, setPickerOpen] = useState(false);
+  const [accountPickerOpen, setAccountPickerOpen] = useState(false);
 
   const [pinging, setPinging] = useState(false);
   const [pings, setPings] = useState<Record<string, PingResult>>({});
+
+  const account = CREDENTIAL_SETS.find((s) => s.id === accountId);
+
+  // Subscription status of the active line (Active / Expired …, expiry, connections)
+  const [lineInfo, setLineInfo] = useState<AccountInfo | null | undefined>(undefined);
+  useEffect(() => {
+    let cancelled = false;
+    setLineInfo(undefined);
+    fetchAccountInfo(url, username, password).then((info) => { if (!cancelled) setLineInfo(info); });
+    return () => { cancelled = true; };
+  }, [url, username, password]);
 
   const applyServer = (next: string) => {
     if (next === url) return;
@@ -74,12 +87,20 @@ export default function StreamTypeScreen() {
     applyServer(next);
   };
 
+  const handlePickAccount = (id: string) => {
+    setAccountPickerOpen(false);
+    if (id === accountId) return;
+    clearAll(); // stream URLs embed the credentials of the previous account
+    setPings({}); // ping results were measured with the previous credentials
+    setAccount(id);
+  };
+
   /** Ping every server in parallel and switch to the fastest one that accepts the login. */
   const handleFindBest = async () => {
     setPinging(true);
     setPings({});
     const results = await Promise.all(
-      SERVERS.map(async (server) => {
+      servers.map(async (server) => {
         const result = await pingServer(server, username, password);
         setPings((prev) => ({ ...prev, [server]: result }));
         return { server, result };
@@ -114,7 +135,21 @@ export default function StreamTypeScreen() {
     ]).start();
   }, []);
 
+  // TV: back on this screen, focus the card that was opened (Android would pick the first badge).
+  const cardRefs = useRef<Partial<Record<StreamType, any>>>({});
+  const lastOpened = useRef<StreamType>('live');
+  useEffect(() => {
+    let cancel = () => {};
+    const unsub = navigation.addListener('transitionEnd' as any, (e: any) => {
+      if (e.data.closing) return;
+      cancel();
+      cancel = restoreTVFocus(() => cardRefs.current[lastOpened.current]);
+    });
+    return () => { cancel(); unsub(); };
+  }, [navigation]);
+
   const handleSelect = (type: StreamType) => {
+    lastOpened.current = type;
     navigation.navigate('Categories', { type });
   };
 
@@ -134,26 +169,75 @@ export default function StreamTypeScreen() {
           <View>
             <Text style={styles.greeting}>Signed in as</Text>
             <Text style={styles.username}>{username}</Text>
+            <LineStatus info={lineInfo} />
             {mac ? <Text style={styles.mac}>{mac}</Text> : null}
           </View>
         </View>
       </View>
 
-      {/* Server badge */}
-      <Pressable onPress={() => setPickerOpen(true)} style={styles.serverBadge}>
-        <Ionicons name="server-outline" size={12} color={colors.textMuted} />
-        <Text style={styles.serverText} numberOfLines={1}>{serverDisplay}</Text>
-        <Ionicons name="chevron-down" size={12} color={colors.textMuted} />
-      </Pressable>
+      {/* Account + server badges */}
+      <View style={styles.badges}>
+        <Pressable
+          onPress={() => setAccountPickerOpen(true)}
+          style={({ focused }: any) => [styles.badge, focused && styles.badgeFocused]}
+        >
+          <Ionicons name="person-circle-outline" size={14} color={colors.textMuted} />
+          <Text style={styles.badgeText} numberOfLines={1}>{account?.label ?? username}</Text>
+          <Ionicons name="chevron-down" size={12} color={colors.textMuted} />
+        </Pressable>
+        <Pressable
+          onPress={() => setPickerOpen(true)}
+          style={({ focused }: any) => [styles.badge, focused && styles.badgeFocused]}
+        >
+          <Ionicons name="server-outline" size={12} color={colors.textMuted} />
+          <Text style={styles.badgeText} numberOfLines={1}>{serverDisplay}</Text>
+          <Ionicons name="chevron-down" size={12} color={colors.textMuted} />
+        </Pressable>
+      </View>
+
+      <Modal visible={accountPickerOpen} transparent animationType="fade" onRequestClose={() => setAccountPickerOpen(false)}>
+        <View style={styles.modalBackdrop}>
+          {/* Not focusable: on TV the remote's Back button closes the picker. */}
+          <Pressable style={StyleSheet.absoluteFill} focusable={false} onPress={() => setAccountPickerOpen(false)} />
+          <View style={styles.modalCard}>
+            <Text style={styles.modalTitle}>Choose account</Text>
+            {CREDENTIAL_SETS.map((set) => {
+              const ready = isConfigured(set);
+              const active = set.id === accountId;
+              return (
+                <Pressable
+                  key={set.id}
+                  onPress={() => handlePickAccount(set.id)}
+                  disabled={!ready}
+                  hasTVPreferredFocus={active}
+                  style={({ focused }: any) => [styles.serverRow, !ready && styles.rowDisabled, focused && styles.serverRowFocused]}
+                >
+                  <View style={{ flex: 1 }}>
+                    <Text style={[styles.serverRowText, active && styles.serverRowActive]} numberOfLines={1}>
+                      {set.label}
+                    </Text>
+                    <Text style={styles.pingText} numberOfLines={1}>
+                      {ready ? set.username : 'Not configured · add it in src/config.ts'}
+                    </Text>
+                  </View>
+                  {active && <Ionicons name="checkmark" size={18} color={colors.primary} style={{ marginLeft: spacing.sm }} />}
+                </Pressable>
+              );
+            })}
+          </View>
+        </View>
+      </Modal>
 
       <Modal visible={pickerOpen} transparent animationType="fade" onRequestClose={() => setPickerOpen(false)}>
-        <Pressable style={styles.modalBackdrop} onPress={() => setPickerOpen(false)}>
+        <View style={styles.modalBackdrop}>
+          {/* Not focusable: on TV the remote's Back button closes the picker. */}
+          <Pressable style={StyleSheet.absoluteFill} focusable={false} onPress={() => setPickerOpen(false)} />
           <View style={styles.modalCard}>
             <Text style={styles.modalTitle}>Choose server</Text>
             <Pressable
               onPress={handleFindBest}
               disabled={pinging}
-              style={({ focused }: any) => [styles.findBestBtn, pinging && { opacity: 0.6 }, focused && styles.serverRowFocused]}
+              style={({ focused }: any) => [styles.findBestBtn, pinging && { opacity: 0.6 }, focused && styles.findBestFocused]}
             >
               {pinging ? (
                 <ActivityIndicator size="small" color={colors.white} />
@@ -162,7 +246,7 @@ export default function StreamTypeScreen() {
               )}
               <Text style={styles.findBestText}>{pinging ? 'Testing servers…' : 'Find best'}</Text>
             </Pressable>
-            {SERVERS.map((server) => (
+            {servers.map((server) => (
               <Pressable
                 key={server}
                 onPress={() => handlePickServer(server)}
@@ -181,7 +265,7 @@ export default function StreamTypeScreen() {
               </Pressable>
             ))}
           </View>
-        </Pressable>
+        </View>
       </Modal>
 
       {/* Title */}
@@ -194,16 +278,49 @@ export default function StreamTypeScreen() {
         style={[styles.cards, { opacity: fadeAnim, transform: [{ translateY: slideAnim }] }]}
       >
         {CARDS.map((card, i) => (
-          <TypeCard key={card.type} card={card} onPress={() => handleSelect(card.type)} isFirst={i === 0} />
+          <TypeCard
+            key={card.type}
+            ref={(r: any) => { cardRefs.current[card.type] = r; }}
+            card={card}
+            onPress={() => handleSelect(card.type)}
+            isFirst={i === 0}
+          />
         ))}
       </Animated.View>
     </SafeAreaView>
   );
 }
 
-function TypeCard({ card, onPress, isFirst }: { card: TypeCard; onPress: () => void; isFirst?: boolean }) {
+function formatDate(d: Date): string {
+  return d.toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' });
+}
+
+/** One line under the user name: subscription status, expiry and connection limit. */
+function LineStatus({ info }: { info: AccountInfo | null | undefined }) {
+  if (info === undefined) return <Text style={styles.lineStatus}>Checking subscription…</Text>;
+  if (info === null) return <Text style={styles.lineStatus}>Subscription status unavailable on this server</Text>;
+  const active = info.status === 'Active';
+  const parts = [
+    active ? 'Active' : info.status,
+    info.expiresAt
+      ? `${info.expiresAt.getTime() < Date.now() ? 'ended' : 'until'} ${formatDate(info.expiresAt)}`
+      : null,
+    info.maxConnections ? `${info.maxConnections} screen${info.maxConnections > 1 ? 's' : ''}` : null,
+  ].filter(Boolean);
+  return (
+    <Text style={[styles.lineStatus, { color: active ? colors.success : colors.error }]}>
+      {parts.join(' · ')}
+    </Text>
+  );
+}
+
+const TypeCard = React.forwardRef<any, { card: TypeCard; onPress: () => void; isFirst?: boolean }>(function TypeCard(
+  { card, onPress, isFirst },
+  ref,
+) {
   return (
     <Pressable
+      ref={ref}
       style={({ focused }: any) => [styles.cardWrapper, focused && styles.cardWrapperFocused]}
       onPress={onPress}
       hasTVPreferredFocus={isFirst}
@@ -227,7 +344,7 @@ function TypeCard({ card, onPress, isFirst }: { card: TypeCard; onPress: () => v
       </LinearGradient>
     </Pressable>
   );
-}
+});
 
 const styles = StyleSheet.create({
   container: {
@@ -266,6 +383,11 @@ const styles = StyleSheet.create({
     color: colors.text,
     fontWeight: '600',
   },
+  lineStatus: {
+    ...typography.caption,
+    color: colors.textMuted,
+    fontWeight: '600',
+  },
   mac: {
     ...typography.caption,
     color: colors.textMuted,
@@ -281,21 +403,29 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
   },
-  serverBadge: {
+  badges: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: spacing.sm,
+    marginHorizontal: spacing.lg,
+    marginBottom: spacing.xl,
+  },
+  badge: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: spacing.xs,
-    marginHorizontal: spacing.lg,
-    marginBottom: spacing.xl,
     paddingHorizontal: spacing.sm,
     paddingVertical: 5,
     backgroundColor: colors.surface,
     borderRadius: radius.full,
     borderWidth: 1,
     borderColor: colors.cardBorder,
-    alignSelf: 'flex-start',
   },
-  serverText: {
+  badgeFocused: {
+    borderColor: colors.white,
+    backgroundColor: 'rgba(255,255,255,0.12)',
+  },
+  badgeText: {
     ...typography.caption,
     color: colors.textMuted,
     maxWidth: 250,
@@ -325,6 +455,8 @@ const styles = StyleSheet.create({
   pingBest: { color: colors.success ?? '#22C55E', fontWeight: '700' },
   pingFail: { color: colors.error },
   serverRowFocused: { backgroundColor: 'rgba(255,255,255,0.12)' },
+  findBestFocused: { borderWidth: 2, borderColor: colors.white },
+  rowDisabled: { opacity: 0.45 },
   serverRowText: { ...typography.body, color: colors.textSecondary, flex: 1 },
   serverRowActive: { color: colors.text, fontWeight: '600' },
   title: {
@@ -336,7 +468,9 @@ const styles = StyleSheet.create({
   },
   cards: {
     flex: 1,
+    flexDirection: Platform.isTV ? 'row' : 'column',
     paddingHorizontal: spacing.lg,
+    paddingBottom: Platform.isTV ? spacing.xl : 0,
     gap: spacing.md,
   },
   cardWrapper: {

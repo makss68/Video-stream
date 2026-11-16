@@ -19,6 +19,7 @@ import { useNavigation, useRoute, RouteProp } from '@react-navigation/native';
 import { useStreamStore } from '../store/streamStore';
 import { RootStackParamList, Category, StreamType } from '../types';
 import { colors, spacing, radius, typography } from '../theme';
+import { restoreTVFocus } from '../utils/tvFocus';
 import CategoryCard from '../components/CategoryCard';
 
 type Nav = NativeStackNavigationProp<RootStackParamList, 'Categories'>;
@@ -40,6 +41,10 @@ export default function CategoriesScreen() {
 
   const [search, setSearch] = useState('');
   const firstItemRef = useRef<any>(null);
+  const itemRefs = useRef(new Map<string, any>());
+  // The category last opened. (Not the last focused one: while a screen is pushed, Android
+  // briefly hands focus to the first card underneath, which would overwrite it.)
+  const lastOpenedId = useRef<string | null>(null);
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -47,14 +52,19 @@ export default function CategoriesScreen() {
     return typeCategories.filter((c) => c.name.toLowerCase().includes(q));
   }, [typeCategories, search]);
 
+  // TV: on open, and again on return from a category (react-native-screens fires onAppear →
+  // transitionEnd), focus the category last opened, else the first one.
   useEffect(() => {
     if (!Platform.isTV) return;
+    let cancel = () => {};
     const unsub = navigation.addListener('transitionEnd' as any, (e: any) => {
-      if (!e.data.closing) {
-        firstItemRef.current?.setNativeProps({ hasTVPreferredFocus: true });
-      }
+      if (e.data.closing) return;
+      cancel();
+      cancel = restoreTVFocus(
+        () => (lastOpenedId.current && itemRefs.current.get(lastOpenedId.current)) || firstItemRef.current,
+      );
     });
-    return unsub;
+    return () => { cancel(); unsub(); };
   }, [navigation]);
 
   useEffect(() => {
@@ -63,6 +73,7 @@ export default function CategoriesScreen() {
 
   const handleCategoryPress = useCallback(
     (category: Category) => {
+      lastOpenedId.current = category.id;
       navigation.navigate('Streams', {
         categoryId: category.id,
         categoryName: category.name,
@@ -82,11 +93,22 @@ export default function CategoriesScreen() {
     ({ item, index }: { item: Category; index: number }) => {
       if (index % 2 !== 0) return null;
       const next = filtered[index + 1];
+      const card = (c: Category, first: boolean) => (
+        <CategoryCard
+          ref={(r: any) => {
+            if (r) itemRefs.current.set(c.id, r); else itemRefs.current.delete(c.id);
+            if (first) firstItemRef.current = r;
+          }}
+          category={c}
+          onPress={() => handleCategoryPress(c)}
+          hasTVPreferredFocus={first}
+        />
+      );
       return (
         <View style={styles.row}>
-          <CategoryCard ref={index === 0 ? firstItemRef : undefined} category={item} onPress={() => handleCategoryPress(item)} hasTVPreferredFocus={index === 0} />
+          {card(item, index === 0)}
           {next ? (
-            <CategoryCard category={next} onPress={() => handleCategoryPress(next)} />
+            card(next, false)
           ) : (
             <View style={{ flex: 1, margin: spacing.xs }} />
           )}
@@ -145,7 +167,8 @@ export default function CategoriesScreen() {
         <View style={styles.center}>
           <Ionicons name="alert-circle-outline" size={48} color={colors.error} />
           <Text style={styles.errorText}>{error}</Text>
-          <Pressable onPress={() => { clearError(); handleRefresh(); }} style={styles.retryBtn}>
+          <Pressable onPress={() => { clearError(); handleRefresh(); }} hasTVPreferredFocus
+            style={({ focused }: any) => [styles.retryBtn, focused && styles.retryBtnFocused]}>
             <Text style={styles.retryText}>Retry</Text>
           </Pressable>
         </View>
@@ -218,5 +241,6 @@ const styles = StyleSheet.create({
   loadingText: { ...typography.body, color: colors.textMuted },
   errorText: { ...typography.body, color: colors.textSecondary, textAlign: 'center' },
   retryBtn: { backgroundColor: colors.primary, borderRadius: radius.md, paddingHorizontal: spacing.xl, paddingVertical: spacing.sm },
+  retryBtnFocused: { borderWidth: 2, borderColor: colors.white },
   retryText: { ...typography.body, color: colors.white, fontWeight: '600' },
 });

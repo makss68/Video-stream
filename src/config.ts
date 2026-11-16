@@ -1,9 +1,8 @@
 /**
- * App configuration.
- * Set USE_MOCK=false and API_BASE_URL to your real server in production.
+ * App configuration: provider servers and the credential sets offered in the app.
  */
 
-/** Server credentials used for automatic sign-in (no gate screen). */
+/** Xtream servers of the provider, in fallback order. */
 export const SERVERS = [
   'http://line.dino.ws:80',
   'http://line.dino-ott.ru:80',
@@ -14,29 +13,48 @@ export const SERVERS = [
   'http://line.rs4ott.com',
 ];
 
-export const CREDENTIALS = {
-  url: SERVERS[0],
-  username: '0d55fb13a8',
-  password: '8f48da343d42',
-};
+/** One subscription (line). The app signs in automatically with the selected set. */
+export interface CredentialSet {
+  /** Stable key, used to remember the selection and the server picked for it. Never rename. */
+  id: string;
+  /** Name shown in the account picker. */
+  label: string;
+  username: string;
+  password: string;
+  /** Servers this line can use; the first one is the default. */
+  servers: string[];
+}
 
-export const config = {
-  /** Base URL for your camera management API */
-  API_BASE_URL: 'https://your-camera-server.com/api',
+/**
+ * Credential sets offered in the account picker (home screen, "Account" badge).
+ * A set with an empty username or password shows as "Not configured" and can't be picked.
+ */
+export const CREDENTIAL_SETS: CredentialSet[] = [
+  {
+    id: 'main',
+    label: 'Mine',
+    username: '0d55fb13a8',
+    password: '8f48da343d42',
+    servers: SERVERS,
+  },
+  {
+    // Placeholder: fill in username and password to enable it.
+    // Replace `servers` if this line belongs to another provider.
+    id: 'second',
+    label: 'Second account',
+    username: '',
+    password: '',
+    servers: SERVERS,
+  },
+];
 
-  /**
-   * When true, the app uses local mock data instead of real API calls.
-   * Set to false and configure API_BASE_URL for production.
-   */
-  USE_MOCK: true,
+/** Used on first launch, or when the remembered set is gone or not configured. */
+export const DEFAULT_CREDENTIAL_SET_ID = 'main';
 
-  /**
-   * When true, the Authorization header is forwarded to the video player
-   * for stream URLs that require authentication.
-   * Requires the streaming server to support Bearer token on HLS requests.
-   */
-  STREAM_AUTH_HEADERS: true,
+export function isConfigured(set: CredentialSet): boolean {
+  return Boolean(set.username && set.password && set.servers.length > 0);
+}
 
-  /** Timeout in ms for API requests */
-  REQUEST_TIMEOUT: 10_000,
-};
+export function findCredentialSet(id: string | null | undefined): CredentialSet | undefined {
+  return CREDENTIAL_SETS.find((s) => s.id === id);
+}

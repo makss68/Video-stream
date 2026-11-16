@@ -19,6 +19,7 @@ import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { useStreamStore } from '../store/streamStore';
 import { RootStackParamList, Stream } from '../types';
 import { colors, spacing, radius, typography } from '../theme';
+import { restoreTVFocus } from '../utils/tvFocus';
 import StreamCard from '../components/StreamCard';
 
 type Nav = NativeStackNavigationProp<RootStackParamList, 'Streams'>;
@@ -32,15 +33,22 @@ export default function StreamsScreen() {
   const { streams, loadingStreams, error, loadStreams, invalidateStreams, clearError } = useStreamStore();
   const [search, setSearch] = useState('');
   const firstItemRef = useRef<any>(null);
+  const itemRefs = useRef(new Map<string, any>());
 
+  // TV: on open, and again on return from the player (react-native-screens fires onAppear →
+  // transitionEnd), focus the stream last played (set by the player, also after zapping), else the first.
   useEffect(() => {
     if (!Platform.isTV) return;
+    let cancel = () => {};
     const unsub = navigation.addListener('transitionEnd' as any, (e: any) => {
-      if (!e.data.closing) {
-        firstItemRef.current?.setNativeProps({ hasTVPreferredFocus: true });
-      }
+      if (e.data.closing) return;
+      cancel();
+      cancel = restoreTVFocus(() => {
+        const { lastPlayedId } = useStreamStore.getState();
+        return (lastPlayedId && itemRefs.current.get(lastPlayedId)) || firstItemRef.current;
+      });
     });
-    return unsub;
+    return () => { cancel(); unsub(); };
   }, [navigation]);
 
   const cacheKey = `${type}:${categoryId}`;
@@ -69,7 +77,15 @@ export default function StreamsScreen() {
 
   const renderItem = useCallback(
     ({ item, index }: { item: Stream; index: number }) => (
-      <StreamCard ref={index === 0 ? firstItemRef : undefined} stream={item} onPress={() => handleStreamPress(item, index)} hasTVPreferredFocus={index === 0} />
+      <StreamCard
+        ref={(r: any) => {
+          if (r) itemRefs.current.set(item.id, r); else itemRefs.current.delete(item.id);
+          if (index === 0) firstItemRef.current = r;
+        }}
+        stream={item}
+        onPress={() => handleStreamPress(item, index)}
+        hasTVPreferredFocus={index === 0}
+      />
     ),
     [handleStreamPress],
   );
@@ -135,7 +151,8 @@ export default function StreamsScreen() {
           <Text style={styles.errorText}>{error}</Text>
           <Pressable
             onPress={() => { clearError(); handleRefresh(); }}
-            style={styles.retryBtn}
+            hasTVPreferredFocus
+            style={({ focused }: any) => [styles.retryBtn, focused && styles.retryBtnFocused]}
           >
             <Text style={styles.retryText}>Retry</Text>
           </Pressable>
@@ -203,6 +220,7 @@ const styles = StyleSheet.create({
   loadingText: { ...typography.body, color: colors.textMuted },
   errorText: { ...typography.body, color: colors.textSecondary, textAlign: 'center' },
   retryBtn: { backgroundColor: colors.primary, borderRadius: radius.md, paddingHorizontal: spacing.xl, paddingVertical: spacing.sm },
+  retryBtnFocused: { borderWidth: 2, borderColor: colors.white },
   retryText: { ...typography.body, color: colors.white, fontWeight: '600' },
   empty: { marginTop: spacing.xxl, alignItems: 'center', gap: spacing.sm },
   emptyTitle: { ...typography.h3, color: colors.textSecondary },

@@ -52,16 +52,39 @@ export async function validateCredentials(
   }
 }
 
+/** Subscription state, from the user_info block of an action-less player_api call. */
+export interface AccountInfo {
+  /** Provider status, e.g. 'Active', 'Expired', 'Banned', 'Disabled'. */
+  status: string;
+  /** Expiry date, or null for lines that never expire. */
+  expiresAt: Date | null;
+  maxConnections: number | null;
+  activeConnections: number | null;
+}
+
 export interface PingResult {
   ok: boolean;
   /** Round-trip time of an authenticated player_api call, in ms. */
   ms: number;
   error?: string;
+  account?: AccountInfo;
+}
+
+function toAccountInfo(userInfo: any): AccountInfo {
+  const num = (v: unknown) => (v == null || v === '' ? null : Number(v));
+  const exp = num(userInfo?.exp_date);
+  return {
+    status: String(userInfo?.status ?? 'Unknown'),
+    expiresAt: exp ? new Date(exp * 1000) : null,
+    maxConnections: num(userInfo?.max_connections),
+    activeConnections: num(userInfo?.active_cons),
+  };
 }
 
 /**
  * Measures how fast a server answers an authenticated (action-less) player_api
- * call. A server only counts as ok if it accepts the credentials.
+ * call. A server only counts as ok if it accepts the credentials and the line is
+ * Active: an expired line still authenticates but every content call fails (HTTP 451).
  */
 export async function pingServer(
   url: string,
@@ -80,8 +103,13 @@ export async function pingServer(
   try {
     const res = await axios.get(endpoint, { params, timeout });
     const ms = Date.now() - start;
-    const auth = res.data?.user_info?.auth;
-    if (auth === 1 || auth === '1') return { ok: true, ms };
+    const userInfo = res.data?.user_info;
+    const auth = userInfo?.auth;
+    if (auth === 1 || auth === '1') {
+      const account = toAccountInfo(userInfo);
+      if (account.status !== 'Active') return { ok: false, ms, error: account.status, account };
+      return { ok: true, ms, account };
+    }
     const msg = typeof res.data === 'string' ? res.data.slice(0, 40) : undefined;
     return { ok: false, ms, error: msg || 'Rejected' };
   } catch (err) {
@@ -96,4 +124,10 @@ export async function pingServer(
     }
     return { ok: false, ms, error: 'Unreachable' };
   }
+}
+
+/** Status of the line on one server; null when the server can't be reached or rejects the login. */
+export async function fetchAccountInfo(url: string, username: string, password: string): Promise<AccountInfo | null> {
+  const result = await pingServer(url, username, password, 10_000);
+  return result.account ?? null;
 }
