@@ -7,6 +7,7 @@ import * as Font from 'expo-font';
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 
 import { useAuthStore } from './src/store/authStore';
+import { useLibraryStore } from './src/store/libraryStore';
 import Navigation from './src/navigation';
 
 // On Android, load fonts from the guaranteed assets/fonts/ path rather than
@@ -23,11 +24,13 @@ const ANDROID_FONT_SOURCES = Platform.OS === 'android'
 
 export default function App() {
   const hydrate = useAuthStore((s) => s.hydrate);
+  const hydrateLibrary = useLibraryStore((s) => s.hydrate);
 
   Font.useFonts(ANDROID_FONT_SOURCES);
 
   useEffect(() => {
     hydrate();
+    hydrateLibrary();
   }, []);
 
   return (

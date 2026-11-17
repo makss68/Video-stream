@@ -3,7 +3,7 @@ import { Category, Stream, StreamType } from '../types';
 import axios from 'axios';
 import { fetchCategories, fetchStreamsByCategory } from '../api/streams';
 
-function describeError(err: unknown, fallback: string): string {
+export function describeError(err: unknown, fallback: string): string {
   if (axios.isAxiosError(err)) {
     const status = err.response?.status;
     if (status === 451) {
@@ -36,7 +36,7 @@ interface StreamStore {
   clearError: () => void;
 }
 
-const emptyCategories: CategoryMap = { live: [], vod: [] };
+const emptyCategories: CategoryMap = { live: [], vod: [], series: [] };
 
 export const useStreamStore = create<StreamStore>((set, get) => ({
   categories: emptyCategories,

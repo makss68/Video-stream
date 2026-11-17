@@ -11,6 +11,7 @@ import LoginScreen from '../screens/LoginScreen';
 import StreamTypeScreen from '../screens/StreamTypeScreen';
 import CategoriesScreen from '../screens/CategoriesScreen';
 import StreamsScreen from '../screens/StreamsScreen';
+import SeriesScreen from '../screens/SeriesScreen';
 import PlayerScreen from '../screens/PlayerScreen';
 
 const Stack = createNativeStackNavigator<RootStackParamList>();
@@ -54,6 +55,11 @@ export default function Navigation() {
             <Stack.Screen
               name="Streams"
               component={StreamsScreen}
+              options={{ animation: 'slide_from_right' }}
+            />
+            <Stack.Screen
+              name="Series"
+              component={SeriesScreen}
               options={{ animation: 'slide_from_right' }}
             />
             <Stack.Screen

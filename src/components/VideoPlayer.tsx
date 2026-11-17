@@ -9,6 +9,13 @@ import { toProxyUrl } from '../utils/proxy';
 
 export type PlayerStatus = 'idle' | 'loading' | 'buffering' | 'readyToPlay' | 'error';
 
+/** A subtitle track embedded in the video (native players only). */
+export interface SubtitleOption {
+  id: string;
+  language: string;
+  label: string;
+}
+
 /** No manifest / first frame within this time → report an error so the screen reloads. */
 const CONNECT_TIMEOUT_MS = 20_000;
 /** Rebuffering (or a frozen picture) for this long → report a stall. */
@@ -26,6 +33,12 @@ interface Props {
   onStatusChange?: (status: PlayerStatus, errorMsg?: string) => void;
   onProgress?: (currentTime: number, duration: number) => void;
   onSeeked?: () => void;
+  /** Playback reached the end. */
+  onEnd?: () => void;
+  /** Subtitles: native players only (browsers don't expose the tracks of these files). */
+  onSubtitleTracks?: (tracks: SubtitleOption[]) => void;
+  subtitleTrackId?: string | null;
+  onSubtitleTrackChange?: (id: string | null) => void;
 }
 
 /** Returns true if the URL should be decoded via HLS.js */
@@ -49,9 +62,11 @@ class ProxyLoader extends HlsDefaultLoader {
 
 export default function VideoPlayer({
   url, playing, muted, seekTo, style,
-  onStatusChange, onProgress, onSeeked,
+  onStatusChange, onProgress, onSeeked, onEnd,
 }: Props) {
   const videoRef = useRef<HTMLVideoElement>(null);
+  const onEndRef = useRef(onEnd);
+  onEndRef.current = onEnd;
   const hlsRef = useRef<Hls | null>(null);
   const statusCb = useRef(onStatusChange);
   statusCb.current = onStatusChange;
@@ -192,6 +207,15 @@ export default function VideoPlayer({
     videoRef.current.currentTime = seekTo;
     onSeeked?.();
   }, [seekTo, onSeeked]);
+
+  // ── End of playback ───────────────────────────────────────────────────────
+  useEffect(() => {
+    const video = videoRef.current;
+    if (!video) return;
+    const handler = () => onEndRef.current?.();
+    video.addEventListener('ended', handler);
+    return () => video.removeEventListener('ended', handler);
+  }, []);
 
   // ── Progress reporting ────────────────────────────────────────────────────
   useEffect(() => {

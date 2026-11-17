@@ -9,6 +9,7 @@ import {
   Modal,
   ActivityIndicator,
   Image,
+  ScrollView,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -48,11 +49,19 @@ const CARDS: TypeCard[] = [
   },
   {
     type: 'vod',
-    label: 'Movies & Series',
-    subtitle: 'On-demand content',
+    label: 'Movies',
+    subtitle: 'Films on demand',
     icon: 'filmstrip',
     gradient: ['#2A1A3A', '#100A20'],
     accentColor: colors.accent,
+  },
+  {
+    type: 'series',
+    label: 'Series',
+    subtitle: 'Shows & episodes',
+    icon: 'television-classic',
+    gradient: ['#123A36', '#071A18'],
+    accentColor: '#2DD4BF',
   },
 ];
 
@@ -309,11 +318,11 @@ export default function StreamTypeScreen() {
         <Text style={styles.title}>What are we watching?</Text>
       </Animated.View>
 
-      {/* Type cards */}
+      {/* Type cards: side by side on TV, a scrolling column elsewhere */}
       <Animated.View
         style={[styles.cards, { opacity: fadeAnim, transform: [{ translateY: slideAnim }] }]}
       >
-        {CARDS.map((card, i) => (
+        {isTV ? CARDS.map((card, i) => (
           <TypeCard
             key={card.type}
             ref={(r: any) => { cardRefs.current[card.type] = r; }}
@@ -321,7 +330,13 @@ export default function StreamTypeScreen() {
             onPress={() => handleSelect(card.type)}
             isFirst={i === 0}
           />
-        ))}
+        )) : (
+          <ScrollView contentContainerStyle={styles.cardsColumn} showsVerticalScrollIndicator={false}>
+            {CARDS.map((card) => (
+              <TypeCard key={card.type} card={card} onPress={() => handleSelect(card.type)} />
+            ))}
+          </ScrollView>
+        )}
       </Animated.View>
     </SafeAreaView>
   );
@@ -333,7 +348,14 @@ function formatDate(d: Date): string {
 
 /** One line under the user name: subscription status, expiry and connection limit. */
 function LineStatus({ info }: { info: AccountInfo | null | undefined }) {
-  if (info === undefined) return <Text style={styles.lineStatus}>Checking subscription…</Text>;
+  if (info === undefined) {
+    return (
+      <View style={styles.lineStatusRow}>
+        <ActivityIndicator size="small" color={colors.textMuted} style={styles.lineStatusSpinner} />
+        <Text style={styles.lineStatus}>Checking subscription…</Text>
+      </View>
+    );
+  }
   if (info === null) return <Text style={styles.lineStatus}>Subscription status unavailable on this server</Text>;
   const active = info.status === 'Active';
   const parts = [
@@ -418,6 +440,8 @@ const styles = StyleSheet.create({
     color: colors.textMuted,
     fontWeight: '600',
   },
+  lineStatusRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  lineStatusSpinner: { transform: [{ scale: 0.7 }], width: 14, height: 14 },
   mac: {
     ...typography.caption,
     color: colors.textMuted,
@@ -508,8 +532,9 @@ const styles = StyleSheet.create({
     paddingBottom: Platform.isTV ? spacing.xl : 0,
     gap: spacing.md,
   },
+  cardsColumn: { gap: spacing.md, paddingBottom: spacing.xl },
   cardWrapper: {
-    flex: 1,
+    flex: Platform.isTV ? 1 : undefined,
     borderRadius: radius.xl,
     overflow: 'hidden',
     borderWidth: 2,
@@ -520,10 +545,10 @@ const styles = StyleSheet.create({
     transform: [{ scale: 1.03 }],
   },
   card: {
-    flex: 1,
-    padding: spacing.xl,
+    flex: Platform.isTV ? 1 : undefined,
+    padding: Platform.isTV ? spacing.xl : spacing.lg,
     justifyContent: 'flex-end',
-    minHeight: 180,
+    minHeight: Platform.isTV ? 180 : 0,
     overflow: 'hidden',
     borderRadius: radius.xl,
   },

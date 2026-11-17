@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { TouchableHighlight, Text, View, StyleSheet } from 'react-native';
+import { TouchableHighlight, Text, View, StyleSheet, ActivityIndicator } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 
@@ -10,10 +10,14 @@ interface Props {
   category: Category;
   onPress: () => void;
   hasTVPreferredFocus?: boolean;
+  /** TV: native view to focus on D-pad up. */
+  nextFocusUp?: number;
+  /** Show a spinner (content loading in the background). */
+  busy?: boolean;
 }
 
 const CategoryCard = React.forwardRef<any, Props>(function CategoryCard(
-  { category, onPress, hasTVPreferredFocus },
+  { category, onPress, hasTVPreferredFocus, nextFocusUp, busy },
   ref,
 ) {
   const [focused, setFocused] = useState(false);
@@ -24,6 +28,7 @@ const CategoryCard = React.forwardRef<any, Props>(function CategoryCard(
       onFocus={() => setFocused(true)}
       onBlur={() => setFocused(false)}
       hasTVPreferredFocus={hasTVPreferredFocus}
+      {...({ nextFocusUp } as any) /* TV prop missing from the TS types */}
       underlayColor="transparent"
       style={[styles.container, focused && styles.containerFocused]}
     >
@@ -42,6 +47,7 @@ const CategoryCard = React.forwardRef<any, Props>(function CategoryCard(
             <Text style={styles.badgeText}>{category.streamCount}</Text>
           </View>
         )}
+        {busy && <ActivityIndicator size="small" color={colors.white} style={styles.busy} />}
         <View style={styles.decorCircle} />
       </LinearGradient>
     </TouchableHighlight>
@@ -83,6 +89,7 @@ const styles = StyleSheet.create({
     marginTop: spacing.xs,
   },
   badgeText: { ...typography.caption, color: colors.white, fontWeight: '600' },
+  busy: { position: 'absolute', top: spacing.md, right: spacing.md },
   decorCircle: {
     position: 'absolute', width: 90, height: 90, borderRadius: 45,
     backgroundColor: 'rgba(255,255,255,0.04)', bottom: -30, right: -20,

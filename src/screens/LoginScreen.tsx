@@ -44,6 +44,7 @@ export default function LoginScreen() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [focusedField, setFocusedField] = useState<string | null>(null); // used only for phone form focus style
+  const [pendingAccount, setPendingAccount] = useState<string | null>(null); // saved account being signed in
 
   // Apply focus/blur styles directly via setNativeProps — more reliable than
   // state-driven re-render on Android TV where timing can cause misses.
@@ -127,8 +128,14 @@ export default function LoginScreen() {
   };
 
   const handleSavedAccount = async (id: string) => {
+    if (pendingAccount) return;
     setError('');
-    await setAccount(id);
+    setPendingAccount(id);
+    try {
+      await setAccount(id); // the navigator then leaves this screen
+    } finally {
+      setPendingAccount(null);
+    }
   };
 
   // Accounts from config.ts: one press signs in, no typing (handy on a TV remote).
@@ -144,7 +151,7 @@ export default function LoginScreen() {
           key={acc.id}
           ref={(r) => { savedRefs.current[i] = r; }}
           onPress={() => handleSavedAccount(acc.id)}
-          disabled={loading}
+          disabled={loading || pendingAccount !== null}
           style={({ focused }: any) => [styles.savedRow, focused && styles.savedRowFocused]}
         >
           <Ionicons name="person-circle-outline" size={22} color={colors.textSecondary} />
@@ -152,7 +159,9 @@ export default function LoginScreen() {
             <Text style={styles.savedLabel} numberOfLines={1}>{acc.label}</Text>
             <Text style={styles.savedSub} numberOfLines={1}>{acc.username}</Text>
           </View>
-          <Ionicons name="arrow-forward" size={16} color={colors.textMuted} />
+          {pendingAccount === acc.id
+            ? <ActivityIndicator size="small" color={colors.primary} />
+            : <Ionicons name="arrow-forward" size={16} color={colors.textMuted} />}
         </Pressable>
       ))}
     </View>
